@@ -87,14 +87,15 @@ describe('LocalStorageAdapter interrupted writes', () => {
     }
   });
 
-  it('a retry after a failed upload removes the stale temp and succeeds', async () => {
+  it('a retry after a failed upload succeeds without touching another upload temp', async () => {
     const { dir, cleanup } = await tempDataDir();
     try {
       const adapter = new LocalStorageAdapter(dir);
 
       // Simulate a crashed upload: a stale temp file with partial bytes and no
-      // committed object. The next put must recover and commit atomically.
-      await writeFile(join(dir, 'retry.bin.upload'), new TextEncoder().encode('partial-crash-bytes'));
+      // committed object. A retry owns a fresh temp path and commits atomically.
+      const staleTemp = join(dir, 'retry.bin.stale.upload');
+      await writeFile(staleTemp, new TextEncoder().encode('partial-crash-bytes'));
 
       const fixture = asciiBytes(512, 3);
       await adapter.put({
@@ -107,7 +108,7 @@ describe('LocalStorageAdapter interrupted writes', () => {
       const fetched = concatBytes(await collect(fromWeb((await adapter.get('retry.bin')).body)));
       expect(bytesEqual(fetched, fixture)).toBe(true);
       const entries = await readdir(dir);
-      expect(entries.filter((e) => e.endsWith('.upload'))).toHaveLength(0);
+      expect(entries).toContain('retry.bin.stale.upload');
     } finally {
       await cleanup();
     }

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
@@ -34,10 +34,10 @@ const META_SUFFIX = '.meta.json';
  *
  * - Keys are validated against a strict single-segment pattern; a key is
  *   never joined into a path until it has passed that check.
- * - Uploads stream to a `<key>.upload` temporary file, then atomically rename
- *   to the final key once the source stream completes. A reader that observes
- *   a final path is guaranteed to read the complete object; a crashed or
- *   failed upload leaves only a `.upload` temp that the next `put` removes.
+ * - Uploads stream to a unique `<key>.<uuid>.upload` temporary file, then
+ *   atomically renames to the final key once the source stream completes. A
+ *   reader that observes a final path is guaranteed to read the complete
+ *   object; a failed upload removes only its own temporary file.
  * - Keys are content-addressed by the caller: a later seal of identical bytes
  *   overwrites nothing because the key is the byte digest.
  * - `get()` resolves the real path before reading so a symlink cannot smuggle
@@ -53,7 +53,9 @@ export class LocalStorageAdapter implements StoragePort {
     this.assertKey(input.key);
     await mkdir(this.dataDir, { recursive: true });
 
-    const tempPath = join(this.dataDir, `${input.key}${UPLOAD_SUFFIX}`);
+    // Each writer owns its temporary pathname; a shared path lets concurrent
+    // puts unlink or rename one another's active inode.
+    const tempPath = join(this.dataDir, `${input.key}.${randomUUID()}${UPLOAD_SUFFIX}`);
     const finalPath = join(this.dataDir, input.key);
     const metaPath = join(this.dataDir, `${input.key}${META_SUFFIX}`);
     const hash = createHash('sha256');
@@ -68,8 +70,8 @@ export class LocalStorageAdapter implements StoragePort {
     }
 
     try {
-      // `flags: 'wx'` gives the atomic exclusive create with one stale-temp
-      // retry. The write stream owns the descriptor and closes it on
+      // `flags: 'wx'` gives the atomic exclusive create. The write stream owns
+      // the descriptor and closes it on
       // finish/error, which `pipeline` waits for. (FileHandle-backed write
       // streams never emit 'close' with autoClose:false, which deadlocks
       // pipeline on current Node.)
@@ -166,28 +168,13 @@ export class LocalStorageAdapter implements StoragePort {
 }
 
 /**
- * Atomically create the temp write stream, removing any stale temp from a
- * crashed upload once. Returns a stream that owns and closes its descriptor.
- * `createWriteStream` reports exclusive-create failures asynchronously via
- * the 'error' event, so this wraps the first attempt in a promise.
+ * Atomically create a uniquely owned temp write stream. `createWriteStream`
+ * reports exclusive-create failures asynchronously via the 'error' event, so
+ * this wraps the operation in a promise without deleting another writer's file.
  */
 async function openTempWriteStream(
   tempPath: string,
 ): Promise<ReturnType<typeof createWriteStream>> {
-  const first = await new Promise<ReturnType<typeof createWriteStream>>((resolve, reject) => {
-    const stream = createWriteStream(tempPath, { flags: 'wx' });
-    stream.once('error', (error) => reject(error));
-    stream.once('open', () => resolve(stream));
-  }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'EEXIST') {
-      return undefined;
-    }
-    throw error;
-  });
-  if (first !== undefined) {
-    return first;
-  }
-  await rm(tempPath, { force: true });
   return new Promise<ReturnType<typeof createWriteStream>>((resolve, reject) => {
     const stream = createWriteStream(tempPath, { flags: 'wx' });
     stream.once('error', (error) => reject(error));
