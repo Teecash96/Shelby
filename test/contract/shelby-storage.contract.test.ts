@@ -28,7 +28,6 @@ export function shelbyConfigFromEnv(
 ): ShelbyAdapterConfig | undefined {
   const required = [
     'SHELBY_RPC_ENDPOINT',
-    'SHELBY_API_KEY',
     'APTOS_FULLNODE_ENDPOINT',
     'APTOS_INDEXER_ENDPOINT',
     'SHELBY_ACCOUNT_ADDRESS',
@@ -41,7 +40,11 @@ export function shelbyConfigFromEnv(
   return {
     network: 'testnet',
     rpcBaseUrl: env.SHELBY_RPC_ENDPOINT!,
-    rpcApiKey: env.SHELBY_API_KEY!,
+    // The testnet RPC accepts anonymous challenges; the API key is optional.
+    rpcApiKey:
+      env.SHELBY_API_KEY === undefined || env.SHELBY_API_KEY === ''
+        ? undefined
+        : env.SHELBY_API_KEY,
     aptosFullnodeEndpoint: env.APTOS_FULLNODE_ENDPOINT!,
     aptosIndexerEndpoint: env.APTOS_INDEXER_ENDPOINT!,
     accountAddress: env.SHELBY_ACCOUNT_ADDRESS!,

@@ -35,7 +35,10 @@ const shelbySchema = commonSchema.extend({
   SHELBY_RPC_ENDPOINT: z.string().url(),
   APTOS_FULLNODE_ENDPOINT: z.string().url(),
   APTOS_INDEXER_ENDPOINT: z.string().url(),
-  SHELBY_API_KEY: z.string().min(1),
+  // The testnet RPC accepts anonymous challenges; the API key is optional.
+  SHELBY_API_KEY: z.string().optional(),
+  // Best-effort region hint for blob registration (required for writes).
+  SHELBY_LOCATION_HINT: z.string().optional(),
   SHELBY_ACCOUNT_ADDRESS: z.string().min(1),
   SHELBY_ACCOUNT_PRIVATE_KEY: z.string().min(1),
 });

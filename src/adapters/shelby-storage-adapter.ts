@@ -46,13 +46,20 @@ import type { StoragePort, StoragePutInput, StoragePutResult } from '../ports/st
 export interface ShelbyAdapterConfig {
   network: 'testnet';
   rpcBaseUrl: string;
-  rpcApiKey: string;
+  /** Optional: the testnet RPC accepts anonymous challenges; present when set. */
+  rpcApiKey?: string;
   indexerBaseUrl?: string;
   indexerApiKey?: string;
   aptosFullnodeEndpoint: string;
   aptosIndexerEndpoint: string;
   accountAddress: string;
   accountPrivateKey: string;
+  /**
+   * Best-effort region hint sent with every blob registration. The SDK passes
+   * null for both location fields when unset, which the Aptos ABI rejects; a
+   * hint makes registration buildable. Honored for FollowHint accounts.
+   */
+  locationHint?: string;
 }
 
 function parsePrivateKeyHex(value: string): Uint8Array {
@@ -93,6 +100,7 @@ export class ShelbyStorageAdapter implements StoragePort {
         fullnode: config.aptosFullnodeEndpoint,
         indexer: config.aptosIndexerEndpoint,
       },
+      locationHint: config.locationHint,
     });
     this.client = client;
     this.rpc = client.rpc;
@@ -113,14 +121,18 @@ export class ShelbyStorageAdapter implements StoragePort {
     const { commitments, size } = staged;
 
     try {
-      const expirationMicros = Number(BigInt(Date.parse(input.expiresAt)) * 1000n);
+      // Shelby expiry in microseconds since epoch. bigint avoids precision
+      // loss for far-future expirations (2030+ exceeds Number.MAX_SAFE_INTEGER
+      // in micros). The Aptos U64 serializer accepts bigint; the SDK's d.ts
+      // types it number, so the runtime contract is honored with a cast.
+      const expirationMicros = BigInt(Date.parse(input.expiresAt)) * 1000n;
 
       const { transaction: registerTx } = await this.coordination.registerBlob({
         account: this.account,
         blobName,
         blobMerkleRoot: commitments.blob_merkle_root,
         size,
-        expirationMicros,
+        expirationMicros: expirationMicros as unknown as number,
       });
 
       const uid = await this.uidFromRegistration(registerTx, blobName);

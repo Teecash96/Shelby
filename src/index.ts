@@ -26,6 +26,7 @@ export function createStorage(config: AppConfig): StoragePort {
     aptosIndexerEndpoint: config.APTOS_INDEXER_ENDPOINT,
     accountAddress: config.SHELBY_ACCOUNT_ADDRESS,
     accountPrivateKey: config.SHELBY_ACCOUNT_PRIVATE_KEY,
+    locationHint: config.SHELBY_LOCATION_HINT,
   };
   return new ShelbyStorageAdapter(shelbyConfig);
 }
