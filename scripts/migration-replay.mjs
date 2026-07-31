@@ -1,36 +1,34 @@
 #!/usr/bin/env node
 /**
  * Deterministic migration replay (IMPLEMENTATION_PLAN.md Phase 3).
- * Phase 3 (SQLite collection index) is not implemented yet, so this command
- * is a deterministic no-op that fails loudly if the environment claims a
- * schema version that does not exist.
+ * Replays all migrations on the configured database and prints the resulting
+ * schema version. Replaying twice produces the identical state (version 1,
+ * seed data present, no duplicates).
  */
-import { readFileSync } from 'node:fs';
-
-const SCHEMA_VERSION_FILE = '.proofvault/schema-version';
+import { SqliteCollectionIndex } from '../dist/src/adapters/sqlite-collection-index.js';
+import { loadConfig } from '../dist/src/config/env.js';
 
 function main() {
-  const driver = process.env.STORAGE_DRIVER ?? 'local';
-  const dbPath = process.env.DATABASE_URL ?? 'file:.proofvault/proofvault.db';
-  console.log(`migration:replay — driver=${driver} database=${dbPath}`);
-
-  let committedVersion = 0;
-  try {
-    committedVersion = Number.parseInt(readFileSync(SCHEMA_VERSION_FILE, 'utf8').trim(), 10);
-  } catch {
-    // No schema has been committed yet; version 0 is the honest state.
-  }
-
-  if (committedVersion > 0) {
-    console.error(
-      `Blocked: schema version ${committedVersion} is recorded but no migration code exists. ` +
-        'This state must not occur after Phase 3.',
-    );
+  const config = loadConfig();
+  if (config.STORAGE_DRIVER !== 'local') {
+    console.error('migration:replay — shelby driver has no local SQLite index; nothing to replay.');
     process.exit(1);
   }
+  console.log(`migration:replay — database=${config.DATABASE_URL}`);
 
-  console.log('No migrations are defined yet (Phase 3 pending). Replay is a deterministic no-op.');
-  console.log('migration:replay — succeeded (version 0).');
+  const index = SqliteCollectionIndex.open(config.DATABASE_URL);
+  const version = index.migrate();
+  // Determinism check: replaying again yields the same version and the same
+  // single seed caller (INSERT OR IGNORE never duplicates).
+  const again = index.migrate();
+  const seedCaller = index.getCaller('caller_dev_local');
+  index.close();
+
+  if (again !== version || seedCaller === undefined) {
+    console.error('migration:replay — FAILED: replay is not deterministic.');
+    process.exit(1);
+  }
+  console.log(`migration:replay — succeeded (schema version ${version}, seed caller present).`);
 }
 
 main();

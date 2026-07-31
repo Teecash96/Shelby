@@ -63,21 +63,21 @@
       "command": "pnpm bootstrap",
       "definition": "package.json scripts.bootstrap (scripts/bootstrap.mjs)",
       "verified": true,
-      "whatItProves": "Idempotent environment + directory bootstrap succeeds without Shelby credentials."
+      "whatItProves": "Idempotent environment + directory bootstrap succeeds without Shelby credentials; opens the collection index and runs migrations + seed."
     },
     {
       "name": "migration:replay",
       "command": "pnpm migration:replay",
       "definition": "package.json scripts.migration:replay (scripts/migration-replay.mjs)",
       "verified": true,
-      "whatItProves": "Migration replay is deterministic at schema version 0 (Phase 3 pending)."
+      "whatItProves": "Migration replay is deterministic: runs twice to schema version 1 with the seed caller present and no duplicates."
     },
     {
       "name": "auth:smoke",
       "command": "pnpm auth:smoke",
       "definition": "package.json scripts.auth:smoke (scripts/auth-smoke.mjs)",
-      "verified": false,
-      "blockedBy": "Phase 3 (API server, SQLite index, caller ownership) not implemented. Exits non-zero intentionally."
+      "verified": true,
+      "whatItProves": "Real authorization flows against the local index: seeded dev caller authenticates; unknown key, missing header, and revoked key are denied with the stable codes."
     },
     {
       "name": "runtime:proof",

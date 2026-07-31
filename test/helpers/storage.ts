@@ -81,7 +81,12 @@ export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
   if (a === b) return true;
   // Buffer.compare is a single native memcmp for same-length buffers.
-  return Buffer.compare(Buffer.from(a.buffer, a.byteOffset, a.byteLength), Buffer.from(b.buffer, b.byteOffset, b.byteLength)) === 0;
+  return (
+    Buffer.compare(
+      Buffer.from(a.buffer, a.byteOffset, a.byteLength),
+      Buffer.from(b.buffer, b.byteOffset, b.byteLength),
+    ) === 0
+  );
 }
 
 /** Scoped scratch directory per adapter instance; wiped on suite teardown. */
