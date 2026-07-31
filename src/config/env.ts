@@ -28,6 +28,9 @@ const localSchema = commonSchema.extend({
 
 const shelbySchema = commonSchema.extend({
   STORAGE_DRIVER: z.literal('shelby'),
+  // The collection index is always SQLite for now (ARCHITECTURE.md); the
+  // artifact backend is Shelby.
+  DATABASE_URL: z.string().min(1).default('file:.proofvault/proofvault.db'),
   SHELBY_NETWORK: z.literal('testnet'),
   SHELBY_RPC_ENDPOINT: z.string().url(),
   APTOS_FULLNODE_ENDPOINT: z.string().url(),

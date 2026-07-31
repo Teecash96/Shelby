@@ -84,14 +84,14 @@
       "command": "pnpm runtime:proof",
       "definition": "package.json scripts.runtime:proof (scripts/runtime-proof.mjs)",
       "verified": true,
-      "whatItProves": "Local seal-to-verify vertical slice over HTTP with fresh evidence under evidence/: multipart seal (201), verify (verified), artifact download with SHA-256 digest match. Shelby testnet remains unverified (Phase 6)."
+      "whatItProves": "Local seal-to-verify vertical slice over HTTP with fresh evidence under evidence/: multipart seal (201), verify (verified), artifact download with SHA-256 digest match. Shelby testnet remains unverified (Phase 6): the adapter is implemented behind StoragePort and fails closed without real credentials; the contract suite is skipped (never mocked) until testnet credentials are provided."
     },
     {
       "name": "start",
       "command": "pnpm start",
       "definition": "package.json scripts.start (dist/src/index.js)",
       "verified": true,
-      "whatItProves": "Boots the ProofVault API with the local driver; fail-closed on STORAGE_DRIVER=shelby."
+      "whatItProves": "Boots the ProofVault API with the local driver; fail-closed on STORAGE_DRIVER=shelby with a precise list of missing environment variables."
     }
   ]
 }

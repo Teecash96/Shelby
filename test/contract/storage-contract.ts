@@ -31,7 +31,9 @@ export interface AdapterHarness {
  */
 export function runStorageContractSuite(harness: AdapterHarness): void {
   describe(`storage contract suite: ${harness.name}`, () => {
-    const { dir } = testDataDir(`adapter-${harness.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`);
+    const { dir } = testDataDir(
+      `adapter-${harness.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`,
+    );
     const adapter = harness.makeAdapter(dir);
 
     it('round-trips an empty object', async () => {
@@ -137,20 +139,24 @@ export function runStorageContractSuite(harness: AdapterHarness): void {
     });
 
     it('rejects keys with absolute paths and control characters', async () => {
-      await expect(adapter.put({
-        key: '/etc/passwd',
-        body: streamOf(asciiBytes(2)),
-        contentType: 'application/octet-stream',
-        expiresAt: EXPIRES_AT,
-        idempotencyKey: 'idem-abs',
-      })).rejects.toThrow();
-      await expect(adapter.put({
-        key: 'bad\u0000key',
-        body: streamOf(asciiBytes(2)),
-        contentType: 'application/octet-stream',
-        expiresAt: EXPIRES_AT,
-        idempotencyKey: 'idem-nul',
-      })).rejects.toThrow();
+      await expect(
+        adapter.put({
+          key: '/etc/passwd',
+          body: streamOf(asciiBytes(2)),
+          contentType: 'application/octet-stream',
+          expiresAt: EXPIRES_AT,
+          idempotencyKey: 'idem-abs',
+        }),
+      ).rejects.toThrow();
+      await expect(
+        adapter.put({
+          key: 'bad\u0000key',
+          body: streamOf(asciiBytes(2)),
+          contentType: 'application/octet-stream',
+          expiresAt: EXPIRES_AT,
+          idempotencyKey: 'idem-nul',
+        }),
+      ).rejects.toThrow();
     });
 
     it('same-key puts never silently mix byte streams (first write wins, later writes ignored)', async () => {

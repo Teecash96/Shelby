@@ -380,6 +380,11 @@ function parseCollectionField(value: string | undefined): {
       { path: 'collection', reason: 'name and expiresAt are required' },
     ]);
   }
+  if (parsed.name.length < 1 || parsed.name.length > 120) {
+    throw new ValidationError('Collection name must be 1-120 characters.', [
+      { path: 'name', reason: '1-120 characters' },
+    ]);
+  }
   const metadata: Record<string, string> = {};
   if (parsed.metadata !== undefined) {
     if (
@@ -391,10 +396,21 @@ function parseCollectionField(value: string | undefined): {
         { path: 'metadata', reason: 'object expected' },
       ]);
     }
-    for (const [key, item] of Object.entries(parsed.metadata as Record<string, unknown>)) {
-      if (typeof item !== 'string') {
-        throw new ValidationError('metadata values must be strings.', [
-          { path: `metadata.${key}`, reason: 'string expected' },
+    const entries = Object.entries(parsed.metadata as Record<string, unknown>);
+    if (entries.length > 20) {
+      throw new ValidationError('metadata must have at most 20 entries.', [
+        { path: 'metadata', reason: 'no more than 20 keys' },
+      ]);
+    }
+    for (const [key, item] of entries) {
+      if (!/^[A-Za-z0-9_.-]{1,64}$/.test(key)) {
+        throw new ValidationError('metadata keys must match ^[A-Za-z0-9_.-]{1,64}$.', [
+          { path: `metadata.${key}`, reason: 'invalid key' },
+        ]);
+      }
+      if (typeof item !== 'string' || item.length > 500) {
+        throw new ValidationError('metadata values must be strings of at most 500 characters.', [
+          { path: `metadata.${key}`, reason: 'string of at most 500 characters expected' },
         ]);
       }
       metadata[key] = item;

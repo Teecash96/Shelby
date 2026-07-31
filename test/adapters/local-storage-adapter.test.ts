@@ -144,7 +144,11 @@ describe('LocalStorageAdapter traversal and symlink defense', () => {
     await rm(join(dir, 'legit.bin'), { force: true });
     await symlink(outside, join(dir, 'legit.bin'));
 
-    await expect(adapter.get('legit.bin')).rejects.toThrow(/escapes the data directory|not found/i);
+    // The O_NOFOLLOW open rejects the symlink (ELOOP/EACCES) — the symlink can
+    // never be read through.
+    await expect(adapter.get('legit.bin')).rejects.toThrow(
+      /escapes the data directory|not found|ELOOP|EACCES|EPERM/i,
+    );
     await rm(join(dir, '..'), { recursive: true, force: true });
   });
 

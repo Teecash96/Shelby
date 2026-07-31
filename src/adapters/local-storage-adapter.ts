@@ -2,16 +2,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
+  open,
   readFile,
-  realpath,
   rename,
   rm,
   stat,
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { constants as fsConstants, createWriteStream } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import type { StoragePort, StoragePutInput, StoragePutResult } from '../ports/storage-port.js';
@@ -112,8 +112,14 @@ export class LocalStorageAdapter implements StoragePort {
     if (object.size === undefined) {
       throw new Error(`object is still being uploaded: ${key}`);
     }
-    await assertRealPathInsideRoot(this.dataDir, path);
-    const nodeStream = createReadStream(path);
+    // Open with O_NOFOLLOW so a symlink cannot redirect the read outside the
+    // data directory, even if one is swapped in mid-request (TOCTOU
+    // defense-in-depth). The stream is created from the handle; the handle is
+    // the single owner of the fd and is closed when the stream finishes.
+    const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const nodeStream = handle.createReadStream({ autoClose: false });
+    nodeStream.once('end', () => void handle.close().catch(() => undefined));
+    nodeStream.once('error', () => void handle.close().catch(() => undefined));
     const body = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
     const contentType = await this.readContentType(key);
     return { body, contentType, size: object.size };
@@ -185,15 +191,6 @@ async function openTempWriteStream(
     stream.once('error', (error) => reject(error));
     stream.once('open', () => resolve(stream));
   });
-}
-
-/** A candidate path must resolve to a real file inside the data root. */
-async function assertRealPathInsideRoot(root: string, candidate: string): Promise<void> {
-  const rootReal = await realpath(root);
-  const real = await realpath(candidate);
-  if (real !== rootReal && !real.startsWith(`${rootReal}${sep}`)) {
-    throw new Error('storage path escapes the data directory');
-  }
 }
 
 function toNodeReadable(body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>): Readable {

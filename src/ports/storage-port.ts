@@ -34,6 +34,9 @@ export interface StorageGetResult {
  * shared contract suite.
  */
 export interface StoragePort {
+  /** Diagnostic adapter identifier ('local' | 'shelby'); never a secret. */
+  readonly providerName: string;
+
   put(input: StoragePutInput): Promise<StoragePutResult>;
   get(key: string): Promise<StorageGetResult>;
   exists(key: string): Promise<boolean>;

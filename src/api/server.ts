@@ -27,6 +27,45 @@ export interface ServerDeps {
   maxRequestBytes?: number;
   minExpirationHours?: number;
   maxExpirationDays?: number;
+  /** Seal-route requests allowed per caller per window. */
+  sealRateLimit?: number;
+  /** Retrieval-route requests allowed per caller per window. */
+  retrievalRateLimit?: number;
+  /** Rate-limit window in seconds. */
+  rateLimitWindowSeconds?: number;
+}
+
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+
+/**
+ * Minimal in-memory fixed-window rate limiter keyed by caller ID (and IP as a
+ * fallback). Separate budgets for seal (mutating) and retrieval routes, per
+ * SECURITY.md abuse controls. In-memory only: a single-instance limit, not a
+ * distributed one.
+ */
+export class InMemoryRateLimiter {
+  private readonly buckets = new Map<string, RateBucket>();
+
+  constructor(
+    private readonly limit: number,
+    private readonly windowSeconds: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  allow(key: string): boolean {
+    const now = this.now();
+    const bucket = this.buckets.get(key);
+    if (bucket === undefined || bucket.resetAt <= now) {
+      this.buckets.set(key, { count: 1, resetAt: now + this.windowSeconds * 1000 });
+      return true;
+    }
+    if (bucket.count >= this.limit) return false;
+    bucket.count += 1;
+    return true;
+  }
 }
 
 /** Build the ProofVault API server on the given deps. */
@@ -38,6 +77,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 });
 
   await app.register(multipart, { limits: { fileSize: deps.maxFileBytes ?? 26214400 } });
+
+  const rateLimitWindow = deps.rateLimitWindowSeconds ?? 60;
+  const sealLimiter = new InMemoryRateLimiter(deps.sealRateLimit ?? 60, rateLimitWindow);
+  const retrievalLimiter = new InMemoryRateLimiter(deps.retrievalRateLimit ?? 120, rateLimitWindow);
 
   // Request ID on every response (API_CONTRACT.md general rules).
   app.addHook('onRequest', async (request, reply) => {
@@ -73,18 +116,54 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   // Auth: every route under /api/v1 requires a valid bearer key.
-  app.addHook('preHandler', async (request) => {
+  app.addHook('preHandler', async (request, reply) => {
     if (request.routeOptions.url?.startsWith('/health')) return;
     const caller = await authenticateCaller(deps.index, request.headers.authorization);
     (request as { caller?: unknown }).caller = caller;
+
+    // Rate limit after auth so budgets key by caller ID (SECURITY.md).
+    const url = request.routeOptions.url ?? '';
+    const isSeal = url.includes('/seal');
+    const allowed = isSeal
+      ? sealLimiter.allow(`caller:${caller.callerId}`)
+      : retrievalLimiter.allow(`caller:${caller.callerId}`);
+    if (!allowed) {
+      deps.logger.warn('rate limited', {
+        requestId: request.headers['x-request-id'] as string | undefined,
+        callerId: caller.callerId,
+        errorCode: 'RATE_LIMITED',
+        status: 'rejected',
+        operation: url,
+      });
+      return reply
+        .header('Retry-After', String(rateLimitWindow))
+        .code(429)
+        .send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Too many requests. Try again later.',
+            requestId: request.headers['x-request-id'],
+            details: [],
+          },
+        });
+    }
   });
 
   app.get('/health/live', async () => ({ status: 'ok' }));
   app.get('/health/ready', async () => {
-    const ready =
-      (await deps.storage.exists('__health_probe__').catch(() => false)) === false ||
-      (await deps.storage.exists('__health_probe__').catch(() => false));
-    return { status: ready ? 'ready' : 'degraded' };
+    // Bounded storage probe: exists() on a key that can never be committed.
+    // A false (missing) result means the adapter responds; an error means the
+    // dependency is not ready. No secrets or upstream details are exposed.
+    let storageReady = true;
+    try {
+      await Promise.race([
+        deps.storage.exists('__health_probe__'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+      ]);
+    } catch {
+      storageReady = false;
+    }
+    return { status: storageReady ? 'ready' : 'degraded' };
   });
 
   app.post('/api/v1/seal', async (request, reply) => {
@@ -133,8 +212,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (body?.receipt === undefined) {
       throw new ValidationError('receipt is required.', [{ path: 'receipt', reason: 'required' }]);
     }
+    const caller = (request as { caller?: { callerId: string } }).caller;
+    const receipt = body.receipt as Receipt;
+    // Caller ownership (SECURITY.md): if the collection is in the index and
+    // belongs to another caller, it is indistinguishable from absent.
+    if (typeof receipt.collectionId === 'string') {
+      const snapshot = deps.index.getCollection(receipt.collectionId);
+      if (snapshot !== undefined && snapshot.collection.callerId !== caller!.callerId) {
+        throw new ProofVaultError(
+          'COLLECTION_NOT_FOUND',
+          `No such collection: ${receipt.collectionId}`,
+        );
+      }
+    }
     const report = await verifyCollection(
-      { receipt: body.receipt as Receipt },
+      { receipt },
       { index: deps.index, storage: deps.storage, now: deps.now },
     );
     return report;

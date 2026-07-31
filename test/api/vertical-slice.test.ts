@@ -451,3 +451,126 @@ describe('POST /api/v1/seal concurrency', () => {
     expect(statuses.filter((s) => s === 200)).toHaveLength(3);
   });
 });
+
+describe('security review fixes', () => {
+  it('rejects metadata exceeding the manifest schema bounds at seal time', async () => {
+    const tooMany = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`key${i}`, 'v']));
+    const form = new FormData();
+    form.append(
+      'collection',
+      JSON.stringify({
+        name: 'bad metadata',
+        expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+        metadata: tooMany,
+      }),
+    );
+    form.append('files', new Blob(['x']), 'a.txt');
+    const res = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': 'api-meta-toomany-001' },
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+
+    // Invalid metadata key pattern is also rejected.
+    const badKey = new FormData();
+    badKey.append(
+      'collection',
+      JSON.stringify({
+        name: 'bad key',
+        expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+        metadata: { 'bad key!': 'v' },
+      }),
+    );
+    badKey.append('files', new Blob(['x']), 'a.txt');
+    const res2 = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': 'api-meta-badkey-001' },
+      body: badKey,
+    });
+    expect(res2.status).toBe(400);
+  });
+
+  it('verify hides another callers collection as 404', async () => {
+    const sealRes = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': 'api-verify-owner-001' },
+      body: formData([
+        { name: 'a.txt', filename: 'a.txt', contentType: 'text/plain', content: ARTIFACT_ONE },
+      ]),
+    });
+    const sealed = (await sealRes.json()) as { receipt: unknown };
+    const res = await fetch(`${baseUrl()}/api/v1/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OTHER_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receipt: sealed.receipt }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('COLLECTION_NOT_FOUND');
+  });
+
+  it('health/ready reports a bounded status', async () => {
+    const res = await fetch(`${baseUrl()}/health/ready`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string };
+    expect(['ready', 'degraded']).toContain(body.status);
+  });
+
+  it('rate limits a caller after the budget is exhausted', async () => {
+    // Build a server with a 2-request seal budget.
+    const base = mkdtempSync(join(tmpdir(), 'pv-rate-'));
+    const rlIndex = SqliteCollectionIndex.open(`file:${join(base, 'rl.db')}`);
+    await rlIndex.upsertCaller({
+      callerId: 'caller_dev_local',
+      keyHash: hashApiKey(DEV_KEY),
+      label: 'rl',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    const rlApp = await buildServer({
+      index: rlIndex,
+      storage: new LocalStorageAdapter(join(base, 'storage')),
+      logger: createLogger('error'),
+      sealRateLimit: 2,
+      retrievalRateLimit: 2,
+      rateLimitWindowSeconds: 60,
+    });
+    await rlApp.listen({ port: 0, host: '127.0.0.1' });
+    const rlPort = (rlApp.server.address() as { port: number }).port;
+    const rlUrl = `http://127.0.0.1:${rlPort}`;
+    try {
+      const mkForm = () => {
+        const form = new FormData();
+        form.append(
+          'collection',
+          JSON.stringify({ name: 'rl', expiresAt: new Date(Date.now() + 86400000).toISOString() }),
+        );
+        form.append('files', new Blob(['x']), 'a.txt');
+        return form;
+      };
+      const seal = async (n: number) =>
+        fetch(`${rlUrl}/api/v1/seal`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${DEV_KEY}`,
+            'Idempotency-Key': `api-rl-key-${String(n).padStart(4, '0')}-1234`,
+          },
+          body: mkForm(),
+        });
+      const first = await seal(1);
+      const second = await seal(2);
+      const third = await seal(3);
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(third.status).toBe(429);
+      const body = (await third.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('RATE_LIMITED');
+    } finally {
+      await rlApp.close();
+      rlIndex.close();
+    }
+  });
+});

@@ -1,25 +1,41 @@
-import { loadConfig } from './config/env.js';
+import { loadConfig, type AppConfig } from './config/env.js';
 import { createLogger } from './observability/logger.js';
 import { LocalStorageAdapter } from './adapters/local-storage-adapter.js';
+import {
+  ShelbyStorageAdapter,
+  type ShelbyAdapterConfig,
+} from './adapters/shelby-storage-adapter.js';
 import { SqliteCollectionIndex } from './adapters/sqlite-collection-index.js';
 import { buildServer } from './api/server.js';
+import type { StoragePort } from './ports/storage-port.js';
+
+/**
+ * Build the storage adapter for the selected driver. Fails closed when
+ * STORAGE_DRIVER=shelby but the environment is incomplete (loadConfig already
+ * validates this). No credentials are ever read from files or invented.
+ */
+export function createStorage(config: AppConfig): StoragePort {
+  if (config.STORAGE_DRIVER === 'local') {
+    return new LocalStorageAdapter(config.LOCAL_STORAGE_DIR);
+  }
+  const shelbyConfig: ShelbyAdapterConfig = {
+    network: 'testnet',
+    rpcBaseUrl: config.SHELBY_RPC_ENDPOINT,
+    rpcApiKey: config.SHELBY_API_KEY,
+    aptosFullnodeEndpoint: config.APTOS_FULLNODE_ENDPOINT,
+    aptosIndexerEndpoint: config.APTOS_INDEXER_ENDPOINT,
+    accountAddress: config.SHELBY_ACCOUNT_ADDRESS,
+    accountPrivateKey: config.SHELBY_ACCOUNT_PRIVATE_KEY,
+  };
+  return new ShelbyStorageAdapter(shelbyConfig);
+}
 
 /** Boot the ProofVault API with the configured driver. Fail closed on bad env. */
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
 
-  if (config.STORAGE_DRIVER !== 'local') {
-    logger.error('startup failed', {
-      errorCode: 'INTERNAL_ERROR',
-      status: 'error',
-      reason:
-        'Only the local storage driver is implemented; STORAGE_DRIVER=shelby is not available yet.',
-    });
-    throw new Error('Shelby driver is not implemented; set STORAGE_DRIVER=local.');
-  }
-
-  const storage = new LocalStorageAdapter(config.LOCAL_STORAGE_DIR);
+  const storage = createStorage(config);
   const index = SqliteCollectionIndex.open(config.DATABASE_URL);
   const server = await buildServer({
     index,
