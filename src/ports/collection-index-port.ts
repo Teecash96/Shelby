@@ -68,6 +68,12 @@ export interface IdempotencyRecord {
   collectionId: string;
   createdAt: string;
   replayed: boolean;
+  /**
+   * Set only by claimIdempotencyKey: the collectionId that won the atomic
+   * claim. When it differs from `collectionId`, this caller lost the claim to
+   * a concurrent contender and must not proceed.
+   */
+  winningCollectionId?: string;
 }
 
 export interface SealedCollectionSnapshot {

@@ -329,9 +329,10 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
   }): Promise<IdempotencyRecord | undefined> {
     const existing = this.getIdempotencyRecord(input.callerId, input.idempotencyKey);
     if (existing !== undefined) {
-      return existing;
+      // A prior claim already owns the key; it wins.
+      return { ...existing, winningCollectionId: existing.collectionId };
     }
-    this.db
+    const result = this.db
       .prepare(
         `INSERT OR IGNORE INTO idempotency
            (caller_id, idempotency_key, request_digest, collection_id, created_at, replayed)
@@ -344,7 +345,14 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
         input.collectionId,
         new Date().toISOString(),
       );
-    return this.getIdempotencyRecord(input.callerId, input.idempotencyKey);
+    const record = this.getIdempotencyRecord(input.callerId, input.idempotencyKey);
+    if (record === undefined) return undefined;
+    // `changes > 0` means THIS insert created the row: this caller's
+    // collectionId won. Otherwise a concurrent contender's row already
+    // existed (INSERT OR IGNORE), and the winner is the stored collectionId.
+    return result.changes > 0
+      ? { ...record, winningCollectionId: input.collectionId }
+      : { ...record, winningCollectionId: record.collectionId };
   }
 
   async releaseIdempotencyClaim(callerId: string, idempotencyKey: string): Promise<void> {

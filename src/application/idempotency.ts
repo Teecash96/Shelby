@@ -65,12 +65,20 @@ export interface IdempotencyOutcome {
   claim?: IdempotencyRecord;
   /** Non-null when the caller must stop with a conflict. */
   conflict?: boolean;
+  /**
+   * True when another caller owns the claim and this caller must stream its
+   * request anyway (provisional-digest flow); the caller's post-stream digest
+   * comparison decides replay vs conflict. Never combined with proceed.
+   */
+  pending?: boolean;
 }
 
 /**
- * Claim the idempotency key for a caller. One winner proceeds; an exact replay
- * returns the original sealed result; a same-key/different-digest replay is a
- * conflict.
+ * Claim the idempotency key for a caller. Exactly one caller wins the atomic
+ * claim and proceeds; every other contender either replays the winner's sealed
+ * result (same digest) or receives a conflict. Concurrent same-digest
+ * contenders wait for the winner to seal so exactly one `proceed: true` is
+ * ever returned for a key.
  */
 export async function claimIdempotency(input: {
   index: CollectionIndexPort;
@@ -78,48 +86,44 @@ export async function claimIdempotency(input: {
   idempotencyKey: string;
   requestDigest: string;
   collectionId: string;
+  /** Bounded wait for a concurrent claim to resolve (default 5s). */
+  waitMs?: number;
+  pollIntervalMs?: number;
 }): Promise<IdempotencyOutcome> {
-  const { index, callerId, idempotencyKey, requestDigest, collectionId } = input;
+  const {
+    index,
+    callerId,
+    idempotencyKey,
+    requestDigest,
+    collectionId,
+    waitMs = 5000,
+    pollIntervalMs = 25,
+  } = input;
+
   const existing = await index.getIdempotencyRecord(callerId, idempotencyKey);
   if (existing !== undefined) {
-    const incomingIsProvisional = isProvisionalDigest(requestDigest);
-    const sameDigest =
-      existing.requestDigest === requestDigest || isProvisionalDigest(existing.requestDigest);
-    if (sameDigest) {
-      const sealed = await index.findSealedByIdempotencyKey(callerId, idempotencyKey);
-      if (sealed !== undefined && sealed.collection.receiptJson !== null) {
-        return {
-          proceed: false,
-          replay: {
-            collectionId: sealed.collection.collectionId,
-            receiptJson: sealed.collection.receiptJson,
-          },
-        };
-      }
-      // Same digest (or a provisional claim still streaming) but no sealed
-      // collection: the earlier seal never completed. Reuse the claim's
-      // collection id so reconciliation can finish it.
-      return { proceed: true, claim: existing };
+    const outcome = await resolveExistingClaim(
+      index,
+      callerId,
+      idempotencyKey,
+      requestDigest,
+      existing,
+    );
+    if (outcome !== undefined) return outcome;
+    // Existing claim is not sealed and not a conflict.
+    if (isProvisionalDigest(requestDigest)) {
+      // Provisional flow (seal service): stream anyway; the post-stream
+      // digest comparison decides replay vs conflict. Never a second winner.
+      return { proceed: false, pending: true };
     }
-    if (incomingIsProvisional) {
-      // The incoming digest is provisional (seal service is mid-stream) and the
-      // stored digest differs: the stored digest is real, so this is a replay
-      // candidate whose digest the seal service confirms after streaming.
-      const sealed = await index.findSealedByIdempotencyKey(callerId, idempotencyKey);
-      if (sealed !== undefined && sealed.collection.receiptJson !== null) {
-        return {
-          proceed: false,
-          replay: {
-            collectionId: sealed.collection.collectionId,
-            receiptJson: sealed.collection.receiptJson,
-          },
-        };
-      }
-      // Stored digest is real but not sealed yet; let the stream proceed so the
-      // post-stream check can compare the real digests.
-      return { proceed: true, claim: existing };
-    }
-    return { proceed: false, conflict: true };
+    return waitForResolution(
+      index,
+      callerId,
+      idempotencyKey,
+      requestDigest,
+      waitMs,
+      pollIntervalMs,
+    );
   }
 
   const claim = await index.claimIdempotencyKey({
@@ -128,14 +132,132 @@ export async function claimIdempotency(input: {
     requestDigest,
     collectionId,
   });
-  if (
-    claim === undefined ||
-    (claim.requestDigest !== requestDigest && !isProvisionalDigest(claim.requestDigest))
-  ) {
-    // Lost a concurrent claim to a different digest.
+  if (claim === undefined) {
     return { proceed: false, conflict: true };
   }
-  return { proceed: true, claim };
+
+  // The atomic insert decides the single winner: whoever's collectionId is
+  // stored on the claim row.
+  const won = claim.winningCollectionId === collectionId;
+  if (won) {
+    if (claim.requestDigest !== requestDigest && !isProvisionalDigest(claim.requestDigest)) {
+      // This caller won the insert but the stored digest belongs to a
+      // different (earlier) claim: treat as a conflict.
+      return { proceed: false, conflict: true };
+    }
+    return { proceed: true, claim };
+  }
+
+  // Lost the atomic claim to a concurrent contender. Never proceed.
+  const digestsDiffer =
+    claim.requestDigest !== requestDigest &&
+    !isProvisionalDigest(claim.requestDigest) &&
+    !isProvisionalDigest(requestDigest);
+  if (digestsDiffer) {
+    return { proceed: false, conflict: true };
+  }
+  if (isProvisionalDigest(requestDigest)) {
+    // Provisional flow: stream anyway; post-stream comparison decides.
+    return { proceed: false, pending: true };
+  }
+  return waitForResolution(index, callerId, idempotencyKey, requestDigest, waitMs, pollIntervalMs);
+}
+
+/**
+ * Evaluate an existing claim. Returns an outcome when the state is decisive;
+ * undefined when the caller should wait for the claim to resolve.
+ */
+async function resolveExistingClaim(
+  index: CollectionIndexPort,
+  callerId: string,
+  idempotencyKey: string,
+  requestDigest: string,
+  existing: IdempotencyRecord,
+): Promise<IdempotencyOutcome | undefined> {
+  const incomingIsProvisional = isProvisionalDigest(requestDigest);
+  const sameDigest =
+    existing.requestDigest === requestDigest || isProvisionalDigest(existing.requestDigest);
+  if (sameDigest) {
+    const sealed = await index.findSealedByIdempotencyKey(callerId, idempotencyKey);
+    if (sealed !== undefined && sealed.collection.receiptJson !== null) {
+      return {
+        proceed: false,
+        replay: {
+          collectionId: sealed.collection.collectionId,
+          receiptJson: sealed.collection.receiptJson,
+        },
+      };
+    }
+    // Claimed but not sealed: wait for the winner to finish.
+    return undefined;
+  }
+  if (incomingIsProvisional) {
+    // The incoming digest is provisional (seal service is mid-stream) and the
+    // stored digest is real. Not a conflict: the caller must wait so the
+    // post-stream digest comparison decides replay vs conflict.
+    return undefined;
+  }
+  return { proceed: false, conflict: true };
+}
+
+/**
+ * Wait for a concurrent claim to resolve into a sealed replay. Returns a
+ * conflict when the wait expires or the resolved digest differs.
+ */
+async function waitForResolution(
+  index: CollectionIndexPort,
+  callerId: string,
+  idempotencyKey: string,
+  requestDigest: string,
+  waitMs: number,
+  pollIntervalMs: number,
+): Promise<IdempotencyOutcome> {
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    const sealed = await index.findSealedByIdempotencyKey(callerId, idempotencyKey);
+    if (sealed !== undefined && sealed.collection.receiptJson !== null) {
+      if (sealed.collection.requestDigest === requestDigest) {
+        return {
+          proceed: false,
+          replay: {
+            collectionId: sealed.collection.collectionId,
+            receiptJson: sealed.collection.receiptJson,
+          },
+        };
+      }
+      return { proceed: false, conflict: true };
+    }
+    const record = await index.getIdempotencyRecord(callerId, idempotencyKey);
+    if (record === undefined) {
+      // Claim released (failed seal): the key is free; re-claim.
+      return reClaim(index, callerId, idempotencyKey, requestDigest);
+    }
+    if (record.requestDigest !== requestDigest && !isProvisionalDigest(record.requestDigest)) {
+      return { proceed: false, conflict: true };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return { proceed: false, conflict: true };
+}
+
+/** Re-claim after a release; this caller now races for the free key. */
+async function reClaim(
+  index: CollectionIndexPort,
+  callerId: string,
+  idempotencyKey: string,
+  requestDigest: string,
+): Promise<IdempotencyOutcome> {
+  const collectionId = `col_reclaim_${Date.now().toString(36)}`;
+  const claim = await index.claimIdempotencyKey({
+    callerId,
+    idempotencyKey,
+    requestDigest,
+    collectionId,
+  });
+  if (claim === undefined) return { proceed: false, conflict: true };
+  const won = claim.winningCollectionId === collectionId;
+  if (won) return { proceed: true, claim };
+  return waitForResolution(index, callerId, idempotencyKey, requestDigest, 5000, 25);
 }
 
 function isProvisionalDigest(digest: string): boolean {

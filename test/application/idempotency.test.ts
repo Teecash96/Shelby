@@ -170,7 +170,11 @@ describe('claimIdempotency', () => {
       requestDigest: digest,
       collectionId: 'col_2222222222222222',
     });
-    await commitSeal({ index, collectionId: 'col_2222222222222222', receiptJson: receipt('col_2222222222222222') });
+    await commitSeal({
+      index,
+      collectionId: 'col_2222222222222222',
+      receiptJson: receipt('col_2222222222222222'),
+    });
 
     const replay = await claimIdempotency({
       index,
@@ -211,13 +215,81 @@ describe('claimIdempotency', () => {
     const digestA = 'f1'.repeat(32);
     const digestB = 'f2'.repeat(32);
     const [a, b] = await Promise.all([
-      claimIdempotency({ index, callerId, idempotencyKey: key, requestDigest: digestA, collectionId: 'col_6666666666666666' }),
-      claimIdempotency({ index, callerId, idempotencyKey: key, requestDigest: digestB, collectionId: 'col_7777777777777777' }),
+      claimIdempotency({
+        index,
+        callerId,
+        idempotencyKey: key,
+        requestDigest: digestA,
+        collectionId: 'col_6666666666666666',
+      }),
+      claimIdempotency({
+        index,
+        callerId,
+        idempotencyKey: key,
+        requestDigest: digestB,
+        collectionId: 'col_7777777777777777',
+      }),
     ]);
     const winners = [a, b].filter((o) => o.proceed);
     const losers = [a, b].filter((o) => o.conflict === true);
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
+  });
+
+  it('same-digest concurrent claims: exactly one caller proceeds, the other replays after sealing', async () => {
+    const key = 'idem-same-digest-conc-001';
+    const digest = 'ab'.repeat(32);
+    const winnerCollection = 'col_abcdabcdabcdabcd';
+    const loserCollection = 'col_dcbadcbadcbadcba';
+
+    // Winner claims first (deterministic): the atomic insert stores its
+    // collectionId and it proceeds without waiting.
+    const winnerOutcome = await claimIdempotency({
+      index,
+      callerId,
+      idempotencyKey: key,
+      requestDigest: digest,
+      collectionId: winnerCollection,
+      waitMs: 2000,
+    });
+    expect(winnerOutcome.proceed).toBe(true);
+    expect(winnerOutcome.claim?.winningCollectionId).toBe(winnerCollection);
+
+    // Loser races in with the SAME digest while the winner is mid-seal: it
+    // must NOT proceed; it waits for the winner to seal.
+    const loserPromise = claimIdempotency({
+      index,
+      callerId,
+      idempotencyKey: key,
+      requestDigest: digest,
+      collectionId: loserCollection,
+      waitMs: 2000,
+    });
+
+    // Seal the winner's collection so the loser's wait resolves into a replay.
+    const collection = collectionFor(winnerCollection);
+    collection.idempotencyKey = key;
+    collection.requestDigest = digest;
+    await index.beginSeal({
+      collection,
+      artifacts: [artifactFor(winnerCollection)],
+    });
+    await commitSeal({
+      index,
+      collectionId: winnerCollection,
+      receiptJson: receipt(winnerCollection),
+    });
+
+    // The loser must now replay the winner's result — never a second proceed.
+    const loserOutcome = await loserPromise;
+    expect(loserOutcome.proceed).toBe(false);
+    expect(loserOutcome.conflict).toBeUndefined();
+    expect(loserOutcome.replay?.collectionId).toBe(winnerCollection);
+    expect(loserOutcome.replay?.receiptJson).toBe(receipt(winnerCollection));
+
+    // Exactly one collection exists for the key.
+    const sealed = index.findSealedByIdempotencyKey(callerId, key);
+    expect(sealed?.collection.collectionId).toBe(winnerCollection);
   });
 
   it('abortSeal releases the claim and marks the collection failed', async () => {
@@ -227,7 +299,12 @@ describe('claimIdempotency', () => {
     collection.idempotencyKey = key;
     collection.requestDigest = digest;
     await index.beginSeal({ collection, artifacts: [artifactFor('col_8888888888888888')] });
-    await index.claimIdempotencyKey({ callerId, idempotencyKey: key, requestDigest: digest, collectionId: 'col_8888888888888888' });
+    await index.claimIdempotencyKey({
+      callerId,
+      idempotencyKey: key,
+      requestDigest: digest,
+      collectionId: 'col_8888888888888888',
+    });
 
     await abortSeal({ index, callerId, idempotencyKey: key, collectionId: 'col_8888888888888888' });
 
