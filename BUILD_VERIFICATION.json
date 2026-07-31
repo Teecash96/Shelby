@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-07-31T00:00:00.000Z",
+  "note": "Each verification entry references the real project file defining the command. Entries are truthful about what each command proves at the current phase.",
+  "commands": [
+    {
+      "name": "format:check",
+      "command": "pnpm format:check",
+      "definition": "package.json scripts.format:check",
+      "verified": true,
+      "whatItProves": "Source formatting matches Prettier."
+    },
+    {
+      "name": "lint",
+      "command": "pnpm lint",
+      "definition": "package.json scripts.lint (eslint.config.mjs)",
+      "verified": true,
+      "whatItProves": "ESLint reports zero errors with --max-warnings=0."
+    },
+    {
+      "name": "typecheck",
+      "command": "pnpm typecheck",
+      "definition": "package.json scripts.typecheck (tsconfig.json)",
+      "verified": true,
+      "whatItProves": "Strict TypeScript compiles with no type errors."
+    },
+    {
+      "name": "test",
+      "command": "pnpm test",
+      "definition": "package.json scripts.test (vitest.config.ts)",
+      "verified": true,
+      "whatItProves": "Unit and adapter tests pass (69 tests at Phase 2)."
+    },
+    {
+      "name": "test:contract",
+      "command": "pnpm test:contract",
+      "definition": "package.json scripts.test:contract (vitest.contract.config.ts)",
+      "verified": true,
+      "whatItProves": "Shared storage contract suite passes for the local adapter."
+    },
+    {
+      "name": "build",
+      "command": "pnpm build",
+      "definition": "package.json scripts.build (tsconfig.build.json)",
+      "verified": true,
+      "whatItProves": "TypeScript emits a clean build into dist/."
+    },
+    {
+      "name": "security:secrets",
+      "command": "pnpm security:secrets",
+      "definition": "package.json scripts.security:secrets (scripts/security/secrets-scan.mjs)",
+      "verified": true,
+      "whatItProves": "No high-signal secret patterns in tracked files."
+    },
+    {
+      "name": "security:audit",
+      "command": "pnpm security:audit",
+      "definition": "package.json scripts.security:audit (scripts/security/audit.mjs)",
+      "verified": true,
+      "whatItProves": "Production dependency tree is clean. Dev-only brace-expansion advisory on the ESLint minimatch chain is documented, pinned to best available versions, and does not fail the command."
+    },
+    {
+      "name": "bootstrap",
+      "command": "pnpm bootstrap",
+      "definition": "package.json scripts.bootstrap (scripts/bootstrap.mjs)",
+      "verified": true,
+      "whatItProves": "Idempotent environment + directory bootstrap succeeds without Shelby credentials."
+    },
+    {
+      "name": "migration:replay",
+      "command": "pnpm migration:replay",
+      "definition": "package.json scripts.migration:replay (scripts/migration-replay.mjs)",
+      "verified": true,
+      "whatItProves": "Migration replay is deterministic at schema version 0 (Phase 3 pending)."
+    },
+    {
+      "name": "auth:smoke",
+      "command": "pnpm auth:smoke",
+      "definition": "package.json scripts.auth:smoke (scripts/auth-smoke.mjs)",
+      "verified": false,
+      "blockedBy": "Phase 3 (API server, SQLite index, caller ownership) not implemented. Exits non-zero intentionally."
+    },
+    {
+      "name": "runtime:proof",
+      "command": "pnpm runtime:proof",
+      "definition": "package.json scripts.runtime:proof (scripts/runtime-proof.mjs)",
+      "verified": true,
+      "whatItProves": "Fresh local-adapter artifact round trip with SHA-256 digest match under evidence/. Full seal-to-verify flow remains unverified until Phases 4-5."
+    }
+  ]
+}
