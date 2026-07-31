@@ -8,7 +8,11 @@ import {
   SEED_KEY_HASH,
   SqliteCollectionIndex,
 } from '../../src/adapters/sqlite-collection-index.js';
-import type { ArtifactRecord, CallerRecord, CollectionRecord } from '../../src/ports/collection-index-port.js';
+import type {
+  ArtifactRecord,
+  CallerRecord,
+  CollectionRecord,
+} from '../../src/ports/collection-index-port.js';
 
 let dbFile = '';
 let index: SqliteCollectionIndex;
@@ -173,9 +177,7 @@ describe('SqliteCollectionIndex collections and artifacts', () => {
     const duplicateId = uniqueArtifactId();
     const first = makeArtifact({ artifactId: duplicateId });
     const second = makeArtifact({ artifactId: duplicateId });
-    await expect(
-      index.beginSeal({ collection, artifacts: [first, second] }),
-    ).rejects.toThrow();
+    await expect(index.beginSeal({ collection, artifacts: [first, second] })).rejects.toThrow();
     expect(index.getCollection(collection.collectionId)).toBeUndefined();
   });
 
@@ -185,7 +187,10 @@ describe('SqliteCollectionIndex collections and artifacts', () => {
       collectionId: 'col_3333333333333333',
       callerId: 'caller_seal_2',
     });
-    await index.beginSeal({ collection, artifacts: [makeArtifact({ collectionId: 'col_3333333333333333' })] });
+    await index.beginSeal({
+      collection,
+      artifacts: [makeArtifact({ collectionId: 'col_3333333333333333' })],
+    });
     const receipt = JSON.stringify({ version: '1.0', collectionId: collection.collectionId });
     const ok = await index.markSealed(collection.collectionId, receipt);
     expect(ok).toBe(true);

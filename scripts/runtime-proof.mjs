@@ -5,7 +5,9 @@
  *
  * Proves the local seal-to-verify vertical slice end to end over HTTP:
  * authenticated multipart seal -> receipt -> verify -> artifact download
- * with recalculated SHA-256 match. Shelby testnet remains unverified (Phase 6).
+ * with recalculated SHA-256 match. Shelby testnet evidence is not produced
+ * here: the adapter is implemented behind StoragePort but requires real
+ * testnet credentials, which are absent from this environment.
  */
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -107,7 +109,7 @@ async function main() {
       digestMatches: downloadedSha256 === artifact.sha256,
     },
     unverified: [
-      'Shelby testnet adapter (Phase 6) is not implemented; no testnet evidence exists.',
+      'Shelby testnet evidence is missing: the ShelbyStorageAdapter is implemented behind StoragePort, but no real testnet upload/retrieval was run because no testnet credentials were provided in the environment. The adapter fails closed without them and the contract suite is skipped rather than mocked.',
     ],
   };
 

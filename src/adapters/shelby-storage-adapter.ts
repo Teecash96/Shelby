@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import {
   Account,
   Ed25519PrivateKey,
@@ -6,7 +12,9 @@ import {
 } from '@aptos-labs/ts-sdk';
 import {
   createDefaultErasureCodingProvider,
+  DEFAULT_ERASURE_N,
   generateCommitments,
+  requiredAckCount,
   ShelbyBlobClient,
   ShelbyNodeClient,
   type ShelbyRPCClient,
@@ -19,18 +27,20 @@ import type { StoragePort, StoragePutInput, StoragePutResult } from '../ports/st
  * All `@shelby-protocol/sdk` and `@aptos-labs/ts-sdk` types stay inside this
  * module (ARCHITECTURE.md: the port carries no SDK types). Credentials come
  * only from environment configuration; nothing is committed, logged, or
- * invented. Without a complete testnet configuration the application fails
- * closed and this adapter is never constructed.
+ * invented.
  *
- * Upload flow (streaming, never buffering the whole blob):
- *   generateCommitments(provider, tee)      -> commitments
- *   coordination.registerBlob(...)          -> pending blob; wait for tx
- *   registeredBlobUids(tx.events, deployer) -> on-chain uid
- *   rpc.putBlobChunksets({ blobData: tee }) -> spAcks
- *   coordination.commitObject({ spAcks })   -> durable write
- * The input body is teed so commitments and chunkset upload each get their own
- * streaming pass. If any step cannot be confirmed with real evidence (no UID,
- * no acks, rejected commit), the adapter throws — it never fabricates results.
+ * Upload flow (bounded memory, one-shot input safe):
+ *   1. Consume the request body EXACTLY ONCE, streaming it into a temporary
+ *      file while simultaneously feeding `generateCommitments` and counting
+ *      bytes. No pass over the input is ever repeated.
+ *   2. `registerBlob` on chain with the generated commitments.
+ *   3. Read the on-chain UID from the registration transaction events.
+ *   4. Reopen the temporary file and stream it to `putBlobChunksets`.
+ *   5. Verify the storage-provider ack count meets the SDK's documented
+ *      minimum (`requiredAckCount`) for the scheme.
+ *   6. `commitObject`, then wait for the transaction and confirm
+ *      `confirmedTx.success === true` before returning.
+ * The temporary file is removed on every success and failure path.
  */
 
 export interface ShelbyAdapterConfig {
@@ -91,53 +101,73 @@ export class ShelbyStorageAdapter implements StoragePort {
 
   async put(input: StoragePutInput): Promise<StoragePutResult> {
     const provider = await createDefaultErasureCodingProvider();
-    const size = await contentLength(input.body);
-
-    // Tee the body: one streaming pass feeds commitment generation, the other
-    // feeds the chunkset upload. Neither pass buffers the whole blob.
-    const [commitmentStream, uploadStream] = teeStreams(toWebStream(input.body));
-
-    const commitments = await generateCommitments(provider, commitmentStream);
-    const expirationMicros = Number(BigInt(Date.parse(input.expiresAt)) * 1000n);
     const blobName = input.key;
 
-    const { transaction: registerTx } = await this.coordination.registerBlob({
-      account: this.account,
-      blobName,
-      blobMerkleRoot: commitments.blob_merkle_root,
-      size,
-      expirationMicros,
-    });
+    // Step 1: consume the one-shot input exactly once into a temp file while
+    // counting bytes, then generate commitments from the staged file. The temp
+    // file is the single replay source for both commitments and the chunkset
+    // upload; memory stays bounded and the input is never re-read.
+    const tempDir = await mkdtemp(join(tmpdir(), 'pv-shelby-'));
+    const tempFile = join(tempDir, `${randomUUID()}.blob`);
+    const staged = await stageOnce(input.body, tempFile, provider);
+    const { commitments, size } = staged;
 
-    // Wait for the register transaction and read the on-chain UID from its
-    // events. Real evidence or nothing: no UID means no upload proceeds.
-    const uid = await this.uidFromRegistration(registerTx, blobName);
+    try {
+      const expirationMicros = Number(BigInt(Date.parse(input.expiresAt)) * 1000n);
 
-    const chunksetResult = await this.rpc.putBlobChunksets({
-      account: this.account,
-      uid,
-      blobData: uploadStream,
-      commitments,
-      totalBytes: size,
-    });
+      const { transaction: registerTx } = await this.coordination.registerBlob({
+        account: this.account,
+        blobName,
+        blobMerkleRoot: commitments.blob_merkle_root,
+        size,
+        expirationMicros,
+      });
 
-    if (chunksetResult.spAcks.length === 0) {
-      throw new Error(
-        `Shelby upload for "${blobName}" produced no storage-provider acks. ` +
-          'The adapter refuses to commit without real acknowledgements.',
-      );
+      const uid = await this.uidFromRegistration(registerTx, blobName);
+
+      // Step 4: reopen the temp file and stream it to the storage providers.
+      const chunksetResult = await this.rpc.putBlobChunksets({
+        account: this.account,
+        uid,
+        blobData: fileStream(tempFile),
+        commitments,
+        totalBytes: size,
+      });
+
+      // Step 5: enforce the SDK's documented minimum provider acks.
+      const minAcks = requiredAckCount(DEFAULT_ERASURE_N);
+      if (chunksetResult.spAcks.length < minAcks) {
+        throw new Error(
+          `Shelby upload for "${blobName}" received ${chunksetResult.spAcks.length} ` +
+            `storage-provider acks; at least ${minAcks} are required. ` +
+            'The adapter refuses to commit without the documented acknowledgement minimum.',
+        );
+      }
+
+      // Step 6: commit and confirm success on chain.
+      const { transaction: commitTx } = await this.coordination.commitObject({
+        account: this.account,
+        uid,
+        blobName,
+        overwrite: false,
+        storageProviderAcks: chunksetResult.spAcks,
+      });
+      const confirmed = (await this.coordination.aptos.waitForTransaction({
+        transactionHash: commitTx.hash,
+      })) as UserTransactionResponse;
+      if (confirmed.success !== true) {
+        throw new Error(
+          `Shelby commit for "${blobName}" was not confirmed as successful ` +
+            `(tx ${commitTx.hash}). Real testnet evidence required; nothing is fabricated.`,
+        );
+      }
+
+      const providerRef = `${this.accountAddressHex}:${blobName}#tx:${commitTx.hash}`;
+      return { key: input.key, size, providerRef };
+    } finally {
+      // Clean up the temp file and directory on every success and failure path.
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
-
-    await this.coordination.commitObject({
-      account: this.account,
-      uid,
-      blobName,
-      overwrite: false,
-      storageProviderAcks: chunksetResult.spAcks,
-    });
-
-    const providerRef = `${this.accountAddressHex}:${blobName}`;
-    return { key: input.key, size, providerRef };
   }
 
   async get(key: string): Promise<{
@@ -188,84 +218,80 @@ export class ShelbyStorageAdapter implements StoragePort {
   }
 }
 
-/** Length of a streaming body without buffering (single pass counter). */
-async function contentLength(
+/**
+ * Consume a one-shot body exactly once: stream it into `tempFile` while
+ * feeding `generateCommitments` from the same bytes and counting them.
+ * Returns the commitments and the exact byte count.
+ * Exported for the regression test that proves one-shot inputs upload the
+ * exact same bytes used for commitments.
+ */
+export async function stageOnce(
   body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
-): Promise<number> {
-  const stream = toWebStream(body);
-  const reader = stream.getReader();
+  tempFile: string,
+  provider: Awaited<ReturnType<typeof createDefaultErasureCodingProvider>>,
+): Promise<{ commitments: Awaited<ReturnType<typeof generateCommitments>>; size: number }> {
+  // Pass 1: pump the one-shot body exactly once into the temp file, counting
+  // bytes. Single consumer, no concurrent reads.
+  const fileSink = createWriteStream(tempFile, { flags: 'wx' });
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      await reader.releaseLock();
-      return size;
+  try {
+    for await (const chunk of toAsyncIterable(body)) {
+      size += chunk.byteLength;
+      await writeChunk(fileSink, chunk);
     }
-    size += value.byteLength;
-  }
-}
-
-/** Tee a web stream into two independent readable branches (pull-based). */
-function teeStreams(
-  source: ReadableStream<Uint8Array>,
-): [ReadableStream<Uint8Array>, ReadableStream<Uint8Array>] {
-  const reader = source.getReader();
-  const queue: Uint8Array[] = [];
-  let done = false;
-  let error: unknown = undefined;
-
-  const pump = async (): Promise<IteratorResult<Uint8Array>> => {
-    if (queue.length > 0) return { done: false, value: queue.shift()! };
-    if (done) return { done: true, value: undefined };
-    if (error !== undefined) throw error;
-    const { done: d, value } = await reader.read();
-    if (d) {
-      done = true;
-      return { done: true, value: undefined };
-    }
-    queue.push(value);
-    return { done: false, value: queue.shift()! };
-  };
-
-  const makeBranch = (): ReadableStream<Uint8Array> =>
-    new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          const result = await pump();
-          if (result.done) controller.close();
-          else controller.enqueue(result.value);
-        } catch (cause) {
-          error = cause;
-          controller.error(cause);
-        }
-      },
-      cancel() {
-        void reader.cancel().catch(() => undefined);
-      },
+    await new Promise<void>((resolve, reject) => {
+      fileSink.end((error?: Error | null) => {
+        if (error !== undefined && error !== null) reject(error);
+        else resolve();
+      });
     });
+  } catch (error) {
+    fileSink.destroy();
+    await rm(tempFile, { force: true }).catch(() => undefined);
+    throw error;
+  }
 
-  return [makeBranch(), makeBranch()];
+  // Pass 2: generate commitments from the staged file (a fresh read stream,
+  // never a re-read of the one-shot input). Bounded memory throughout.
+  const commitments = await generateCommitments(provider, fileStream(tempFile));
+  return { commitments, size };
 }
 
-/** Normalize an async iterable or web stream to a web stream (no buffering). */
-function toWebStream(
-  body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
-): ReadableStream<Uint8Array> {
-  if (typeof (body as ReadableStream<Uint8Array>).getReader === 'function') {
-    return body as ReadableStream<Uint8Array>;
-  }
-  const iterator = (body as AsyncIterable<Uint8Array>)[Symbol.asyncIterator]();
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const { done, value } = await iterator.next();
-      if (done) controller.close();
-      else controller.enqueue(value);
-    },
-    cancel() {
-      void iterator
-        .return?.()
-        .then(() => undefined)
-        .catch(() => undefined);
-    },
+/** Write a chunk to the file sink, waiting for backpressure. */
+function writeChunk(sink: ReturnType<typeof createWriteStream>, chunk: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    sink.write(chunk, (error) => {
+      if (error !== undefined && error !== null) reject(error);
+      else resolve();
+    });
   });
+}
+
+/** Normalize a web stream or async iterable into an async iterable. */
+function toAsyncIterable(
+  body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
+): AsyncIterable<Uint8Array> {
+  if (Symbol.asyncIterator in Object(body)) {
+    return body as AsyncIterable<Uint8Array>;
+  }
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<Uint8Array>> {
+          const { done, value } = await reader.read();
+          if (done) {
+            await reader.releaseLock();
+            return { done: true, value: undefined };
+          }
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
+/** A fresh read stream over a file, as a web stream. */
+function fileStream(path: string): ReadableStream<Uint8Array> {
+  return Readable.toWeb(createReadStream(path)) as ReadableStream<Uint8Array>;
 }

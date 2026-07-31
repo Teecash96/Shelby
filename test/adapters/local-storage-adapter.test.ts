@@ -40,13 +40,17 @@ describe('LocalStorageAdapter determinism', () => {
       idempotencyKey: 'idem-ca-2',
     });
     const entries = await readdir(dir);
-    const objectEntries = entries.filter((e) => !e.endsWith('.upload') && !e.endsWith('.meta.json'));
+    const objectEntries = entries.filter(
+      (e) => !e.endsWith('.upload') && !e.endsWith('.meta.json'),
+    );
     expect(objectEntries).toEqual([key]);
   });
 
   it('the same input bytes always produce the same digest key', () => {
     const fixture = asciiBytes(1000, 2);
-    expect(sha256Hex(fixture)).toBe('9f8aeaee57ccc805f3570f36c1c22160f7862d8a9f50faa70c7ae44e6564ce9b');
+    expect(sha256Hex(fixture)).toBe(
+      '9f8aeaee57ccc805f3570f36c1c22160f7862d8a9f50faa70c7ae44e6564ce9b',
+    );
   });
 });
 
@@ -78,7 +82,9 @@ describe('LocalStorageAdapter interrupted writes', () => {
       ).rejects.toThrow('simulated upstream failure');
 
       // A failed upload must never surface as a sealed object.
-      await expect(adapter.get('interrupted.bin')).rejects.toThrow(/not found|still being uploaded/i);
+      await expect(adapter.get('interrupted.bin')).rejects.toThrow(
+        /not found|still being uploaded/i,
+      );
       await expect(adapter.exists('interrupted.bin')).resolves.toBe(false);
       const entries = await readdir(dir);
       expect(entries).toEqual([]);
