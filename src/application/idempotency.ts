@@ -17,6 +17,14 @@ import type { CollectionIndexPort, IdempotencyRecord } from '../ports/collection
 /** Idempotency-Key header: 16-128 printable ASCII characters. */
 export const IDEMPOTENCY_KEY_PATTERN = /^[\x20-\x7E]{16,128}$/;
 
+/**
+ * Provisional digest stored on an in-flight idempotency claim before artifact
+ * hashes are known. Replaced with the real request digest immediately after
+ * streaming. A replay that observes this value mid-flight is treated as a
+ * stale claim (reconcile), never as a conflict.
+ */
+export const PROVISIONAL_DIGEST = 'provisional-digest-pending';
+
 export function validateIdempotencyKey(key: string): void {
   if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
     throw new ProofVaultError(
@@ -74,7 +82,10 @@ export async function claimIdempotency(input: {
   const { index, callerId, idempotencyKey, requestDigest, collectionId } = input;
   const existing = await index.getIdempotencyRecord(callerId, idempotencyKey);
   if (existing !== undefined) {
-    if (existing.requestDigest === requestDigest) {
+    const incomingIsProvisional = isProvisionalDigest(requestDigest);
+    const sameDigest =
+      existing.requestDigest === requestDigest || isProvisionalDigest(existing.requestDigest);
+    if (sameDigest) {
       const sealed = await index.findSealedByIdempotencyKey(callerId, idempotencyKey);
       if (sealed !== undefined && sealed.collection.receiptJson !== null) {
         return {
@@ -85,8 +96,27 @@ export async function claimIdempotency(input: {
           },
         };
       }
-      // Same digest but the earlier seal never completed: the claim is stale.
-      // Reuse the claim's collection id so reconciliation can finish it.
+      // Same digest (or a provisional claim still streaming) but no sealed
+      // collection: the earlier seal never completed. Reuse the claim's
+      // collection id so reconciliation can finish it.
+      return { proceed: true, claim: existing };
+    }
+    if (incomingIsProvisional) {
+      // The incoming digest is provisional (seal service is mid-stream) and the
+      // stored digest differs: the stored digest is real, so this is a replay
+      // candidate whose digest the seal service confirms after streaming.
+      const sealed = await index.findSealedByIdempotencyKey(callerId, idempotencyKey);
+      if (sealed !== undefined && sealed.collection.receiptJson !== null) {
+        return {
+          proceed: false,
+          replay: {
+            collectionId: sealed.collection.collectionId,
+            receiptJson: sealed.collection.receiptJson,
+          },
+        };
+      }
+      // Stored digest is real but not sealed yet; let the stream proceed so the
+      // post-stream check can compare the real digests.
       return { proceed: true, claim: existing };
     }
     return { proceed: false, conflict: true };
@@ -98,11 +128,18 @@ export async function claimIdempotency(input: {
     requestDigest,
     collectionId,
   });
-  if (claim === undefined || claim.requestDigest !== requestDigest) {
+  if (
+    claim === undefined ||
+    (claim.requestDigest !== requestDigest && !isProvisionalDigest(claim.requestDigest))
+  ) {
     // Lost a concurrent claim to a different digest.
     return { proceed: false, conflict: true };
   }
   return { proceed: true, claim };
+}
+
+function isProvisionalDigest(digest: string): boolean {
+  return digest === PROVISIONAL_DIGEST;
 }
 
 /**

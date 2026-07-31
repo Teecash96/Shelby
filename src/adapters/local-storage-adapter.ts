@@ -11,17 +11,19 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import type { StoragePort, StoragePutInput, StoragePutResult } from '../ports/storage-port.js';
 
 /**
- * Storage keys accepted by the local adapter. Single path segment, no dot
- * segments, no path separators, no control characters, printable ASCII only.
- * Server-derived keys (e.g. sha256 hex digests) satisfy this by construction.
+ * Storage keys accepted by the local adapter. Hierarchical keys are
+ * `/`-separated segments; each segment is a safe single path element (no dot
+ * segments, no path separators, no control characters). Server-derived keys
+ * (e.g. `collections/<collectionId>/<sha256>` or `<sha256>`) satisfy this by
+ * construction.
  */
-const KEY_PATTERN = /^[A-Za-z0-9._=-]{1,256}$/;
+const KEY_PATTERN = /^(?:[A-Za-z0-9._-]{1,128}\/)*[A-Za-z0-9._-]{1,128}$/;
 
 /** In-progress uploads are written here before the atomic rename to the final key. */
 const UPLOAD_SUFFIX = '.upload';
@@ -29,11 +31,14 @@ const UPLOAD_SUFFIX = '.upload';
 /** Sidecar claim carrying the stored content type and requested expiry. */
 const META_SUFFIX = '.meta.json';
 
+/** Reject dot segments explicitly; the pattern permits plain dots inside names. */
+const SEGMENT_DOT_PATTERN = /(^|\/)\.{1,2}(\/|$)/;
+
 /**
  * Deterministic local filesystem adapter.
  *
- * - Keys are validated against a strict single-segment pattern; a key is
- *   never joined into a path until it has passed that check.
+ * - Keys are validated against a strict segment pattern and dot-segment
+ *   rejection; a key is never joined into a path until it has passed both.
  * - Uploads stream to a unique `<key>.<uuid>.upload` temporary file, then
  *   atomically renames to the final key once the source stream completes. A
  *   reader that observes a final path is guaranteed to read the complete
@@ -51,7 +56,7 @@ export class LocalStorageAdapter implements StoragePort {
 
   async put(input: StoragePutInput): Promise<StoragePutResult> {
     this.assertKey(input.key);
-    await mkdir(this.dataDir, { recursive: true });
+    await mkdir(join(this.dataDir, dirname(input.key)), { recursive: true });
 
     // Each writer owns its temporary pathname; a shared path lets concurrent
     // puts unlink or rename one another's active inode.
@@ -161,7 +166,7 @@ export class LocalStorageAdapter implements StoragePort {
   }
 
   private assertKey(key: string): void {
-    if (!KEY_PATTERN.test(key)) {
+    if (!KEY_PATTERN.test(key) || SEGMENT_DOT_PATTERN.test(key)) {
       throw new Error(`invalid storage key: ${key}`);
     }
   }

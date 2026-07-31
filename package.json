@@ -21,11 +21,13 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "migration:replay": "node scripts/migration-replay.mjs",
     "auth:smoke": "node scripts/auth-smoke.mjs",
-    "runtime:proof": "node scripts/runtime-proof.mjs"
+    "runtime:proof": "node scripts/runtime-proof.mjs",
+    "start": "node dist/src/index.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
     "@types/node": "^22.15.0",
+    "@types/yazl": "^3.3.1",
     "eslint": "^9.30.1",
     "globals": "^16.0.0",
     "prettier": "^3.5.3",
@@ -34,6 +36,9 @@
     "vitest": "^3.1.4"
   },
   "dependencies": {
+    "@fastify/multipart": "^10.1.0",
+    "fastify": "^5.11.0",
+    "yazl": "^3.3.1",
     "zod": "^3.24.2"
   }
 }

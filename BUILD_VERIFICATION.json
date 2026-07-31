@@ -77,14 +77,21 @@
       "command": "pnpm auth:smoke",
       "definition": "package.json scripts.auth:smoke (scripts/auth-smoke.mjs)",
       "verified": true,
-      "whatItProves": "Real authorization flows against the local index: seeded dev caller authenticates; unknown key, missing header, and revoked key are denied with the stable codes."
+      "whatItProves": "Real HTTP authorization flows against the local index: seeded dev caller seals (201); unknown key denied (403 FORBIDDEN); missing Authorization denied (401); another caller's collection hidden as 404 COLLECTION_NOT_FOUND."
     },
     {
       "name": "runtime:proof",
       "command": "pnpm runtime:proof",
       "definition": "package.json scripts.runtime:proof (scripts/runtime-proof.mjs)",
       "verified": true,
-      "whatItProves": "Fresh local-adapter artifact round trip with SHA-256 digest match under evidence/. Full seal-to-verify flow remains unverified until Phases 4-5."
+      "whatItProves": "Local seal-to-verify vertical slice over HTTP with fresh evidence under evidence/: multipart seal (201), verify (verified), artifact download with SHA-256 digest match. Shelby testnet remains unverified (Phase 6)."
+    },
+    {
+      "name": "start",
+      "command": "pnpm start",
+      "definition": "package.json scripts.start (dist/src/index.js)",
+      "verified": true,
+      "whatItProves": "Boots the ProofVault API with the local driver; fail-closed on STORAGE_DRIVER=shelby."
     }
   ]
 }

@@ -353,6 +353,18 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
       .run(callerId, idempotencyKey);
   }
 
+  async setIdempotencyDigest(input: {
+    callerId: string;
+    idempotencyKey: string;
+    requestDigest: string;
+  }): Promise<void> {
+    this.db
+      .prepare(
+        'UPDATE idempotency SET request_digest = ? WHERE caller_id = ? AND idempotency_key = ?',
+      )
+      .run(input.requestDigest, input.callerId, input.idempotencyKey);
+  }
+
   private userVersion(): number {
     const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     return row.user_version;

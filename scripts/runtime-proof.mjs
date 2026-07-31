@@ -3,80 +3,111 @@
  * Runtime proof (COMMANDCODE_PROMPT.md completion report section 3).
  * Generates fresh evidence under `evidence/` and redacts secrets.
  *
- * Phase gate: the local seal-to-verify vertical slice is not yet implemented
- * (Phases 4-5), so this command produces honest evidence for what IS real
- * today — the local storage adapter round trip — and explicitly marks the
- * full flow unverified. It never invents transactions or runtime results.
+ * Proves the local seal-to-verify vertical slice end to end over HTTP:
+ * authenticated multipart seal -> receipt -> verify -> artifact download
+ * with recalculated SHA-256 match. Shelby testnet remains unverified (Phase 6).
  */
-import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { SqliteCollectionIndex } from '../dist/src/adapters/sqlite-collection-index.js';
 import { LocalStorageAdapter } from '../dist/src/adapters/local-storage-adapter.js';
-import { streamSha256 } from '../dist/src/application/hashing.js';
 import { loadConfig } from '../dist/src/config/env.js';
 import { createLogger } from '../dist/src/observability/logger.js';
+import { buildServer } from '../dist/src/api/server.js';
 
-function sha256Hex(bytes) {
-  return createHash('sha256').update(bytes).digest('hex');
-}
+const DEV_KEY = 'dev-local-key';
 
 async function main() {
   const config = loadConfig();
+  if (config.STORAGE_DRIVER !== 'local') {
+    throw new Error('runtime:proof requires STORAGE_DRIVER=local.');
+  }
   const evidenceDir = resolve('evidence');
   mkdirSync(evidenceDir, { recursive: true });
   const logger = createLogger(config.LOG_LEVEL, { operation: 'runtime:proof' });
-
   const runId = `run_${Date.now()}`;
-  const artifacts = [];
-  const adapter = new LocalStorageAdapter(config.LOCAL_STORAGE_DIR);
 
-  // Seed two deterministic artifacts and stream them through the adapter,
-  // hashing the exact bytes (the same math the seal flow will use).
-  for (const [name, content] of [
-    ['report.txt', 'ProofVault runtime proof: artifact one.\n'],
-    ['dataset.csv', 'id,value\n1,alpha\n2,beta\n'],
-  ]) {
-    const bytes = new TextEncoder().encode(content);
-    const key = sha256Hex(bytes);
-    await adapter.put({
-      key,
-      body: (async function* () {
-        yield bytes;
-      })(),
-      contentType: 'text/plain',
-      expiresAt: '2030-01-01T00:00:00.000Z',
-      idempotencyKey: `runtime-proof-${runId}-${name}`,
-    });
-    const fetched = await adapter.get(key);
-    const { sha256, size } = await streamSha256(streamToAsyncIterable(fetched.body));
-    artifacts.push({
-      name,
-      key,
-      sha256,
-      size,
-      digestMatches: sha256 === key,
-      contentType: fetched.contentType,
-    });
-    logger.info('artifact round trip verified', {
-      artifactCount: 1,
-      bytes: size,
-      status: 'verified',
-      adapter: adapter.providerName,
-    });
+  // Isolated runtime: temp storage + temp index, so proof never pollutes dev data.
+  const base = mkdtempSync(join(tmpdir(), 'pv-proof-'));
+  const index = SqliteCollectionIndex.open(`file:${join(base, 'proof.db')}`);
+  const app = await buildServer({
+    index,
+    storage: new LocalStorageAdapter(join(base, 'storage')),
+    logger,
+  });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = app.server.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const artifactFiles = [
+    { filename: 'report.txt', content: 'ProofVault runtime proof: artifact one.\n' },
+    { filename: 'dataset.csv', content: 'id,value\n1,alpha\n2,beta\n' },
+  ];
+  const form = new FormData();
+  form.append(
+    'collection',
+    JSON.stringify({
+      name: 'Runtime proof bundle',
+      expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      metadata: { source: 'runtime-proof', runId },
+    }),
+  );
+  for (const file of artifactFiles) {
+    form.append('files', new Blob([file.content]), file.filename);
   }
 
-  const allMatch = artifacts.every((a) => a.digestMatches);
+  const sealRes = await fetch(`${baseUrl}/api/v1/seal`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': `runtime-proof-${runId}` },
+    body: form,
+  });
+  const sealBody = await sealRes.json();
+
+  const verifyRes = await fetch(`${baseUrl}/api/v1/verify`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DEV_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ receipt: sealBody.receipt }),
+  });
+  const verifyBody = await verifyRes.json();
+
+  // Download one artifact and recompute its digest over the exact bytes.
+  const artifact = sealBody.artifacts[0];
+  const downloadRes = await fetch(
+    `${baseUrl}/api/v1/artifacts/${sealBody.collectionId}/${artifact.artifactId}`,
+    { headers: { Authorization: `Bearer ${DEV_KEY}` } },
+  );
+  const downloadedBytes = new Uint8Array(await downloadRes.arrayBuffer());
+  const { createHash } = await import('node:crypto');
+  const downloadedSha256 = createHash('sha256').update(downloadedBytes).digest('hex');
+
   const summary = {
     runId,
     timestamp: new Date().toISOString(),
     driver: config.STORAGE_DRIVER,
-    adapter: adapter.providerName,
-    scope: 'phase-2-local-adapter-round-trip',
-    artifacts,
-    result: allMatch ? 'verified' : 'invalid',
+    adapter: 'local',
+    scope: 'phase-4-5-local-seal-verify-vertical-slice',
+    seal: {
+      status: sealRes.status,
+      collectionId: sealBody.collectionId,
+      replayed: sealBody.replayed,
+      artifactCount: sealBody.artifacts.length,
+      receiptManifestSha256: sealBody.receipt.manifestSha256,
+    },
+    verify: {
+      status: verifyRes.status,
+      result: verifyBody.result,
+      summary: verifyBody.summary,
+    },
+    download: {
+      status: downloadRes.status,
+      artifactId: artifact.artifactId,
+      expectedSha256: artifact.sha256,
+      actualSha256: downloadedSha256,
+      digestMatches: downloadedSha256 === artifact.sha256,
+    },
     unverified: [
-      'Seal-to-verify vertical slice (Phases 4-5) is not implemented; no receipts were produced.',
-      'Shelby adapter (Phase 6) is not implemented; no testnet evidence exists.',
+      'Shelby testnet adapter (Phase 6) is not implemented; no testnet evidence exists.',
     ],
   };
 
@@ -85,29 +116,19 @@ async function main() {
   console.log(`Runtime proof written to ${evidenceFile}`);
   console.log(JSON.stringify(summary, null, 2));
 
-  if (!allMatch) {
-    console.error('runtime:proof — FAILED: artifact digest mismatch.');
+  await app.close();
+  index.close();
+
+  const ok =
+    sealRes.status === 201 &&
+    verifyRes.status === 200 &&
+    verifyBody.result === 'verified' &&
+    summary.download.digestMatches;
+  if (!ok) {
+    console.error('runtime:proof — FAILED: seal/verify/download did not all pass.');
     process.exit(1);
   }
-  console.log('runtime:proof — verified for the local adapter round trip.');
-}
-
-function streamToAsyncIterable(body) {
-  const reader = body.getReader();
-  return {
-    [Symbol.asyncIterator]() {
-      return {
-        async next() {
-          const { done, value } = await reader.read();
-          if (done) {
-            await reader.releaseLock();
-            return { done: true, value: undefined };
-          }
-          return { done: false, value };
-        },
-      };
-    },
-  };
+  console.log('runtime:proof — verified: sealed, verified, and downloaded with matching digest.');
 }
 
 main().catch((error) => {

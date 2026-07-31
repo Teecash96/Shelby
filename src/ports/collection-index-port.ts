@@ -124,6 +124,16 @@ export interface CollectionIndexPort {
     collectionId: string;
   }): Promise<IdempotencyRecord | undefined>;
 
+  /**
+   * Update the request digest of an in-flight claim once the sealed request
+   * digest is known (artifact hashes are only available after streaming).
+   */
+  setIdempotencyDigest(input: {
+    callerId: string;
+    idempotencyKey: string;
+    requestDigest: string;
+  }): Promise<void>;
+
   /** Delete an abandoned claim (partial-failure recovery). */
   releaseIdempotencyClaim(callerId: string, idempotencyKey: string): Promise<void>;
 }
