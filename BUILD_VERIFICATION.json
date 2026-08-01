@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T09:30:00.000Z",
+  "generatedAt": "2026-08-01T21:51:55.000Z",
   "note": "Each verification entry references the real project file defining the command. Entries are truthful about what each command proves at the current phase.",
   "commands": [
     {
@@ -28,7 +28,7 @@
       "command": "pnpm test",
       "definition": "package.json scripts.test (vitest.config.ts)",
       "verified": true,
-      "whatItProves": "Unit, API vertical-slice, adapter, and CLI tests pass (204 tests at the current local phase; the Shelby integration remains explicitly skipped without testnet credentials)."
+      "whatItProves": "Unit, API vertical-slice, adapter, and CLI tests pass (206 tests at the current local phase; the Shelby integration remains explicitly skipped without testnet credentials)."
     },
     {
       "name": "test:contract",

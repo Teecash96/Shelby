@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { canonicalManifestJson } from '../domain/manifest.js';
+import { canonicalManifestJson, mediaTypeSchema } from '../domain/manifest.js';
 import type { Manifest, ManifestArtifact } from '../domain/manifest.js';
 import type { Receipt } from '../domain/receipt.js';
 import { ProofVaultError, ValidationError } from '../domain/errors.js';
@@ -177,6 +177,12 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
         }
         const filename = validateFilename(part.filename, seenFilenames);
         const mediaType = part.mimetype ?? 'application/octet-stream';
+        if (!mediaTypeSchema.safeParse(mediaType).success) {
+          throw new ProofVaultError(
+            'UNSUPPORTED_MEDIA_TYPE',
+            `Unsupported media type: ${mediaType}`,
+          );
+        }
         const topLevel = mediaType.split('/')[0];
         if (topLevel === undefined || !MEDIA_TYPE_ALLOWLIST.includes(topLevel)) {
           throw new ProofVaultError(
@@ -485,9 +491,9 @@ function validateFilename(filename: string, seen: Set<string>): string {
       { path: 'files', reason: 'filename must be 1-255 characters' },
     ]);
   }
-  if (filename.includes('/') || filename.includes('\\') || filename.includes('\u0000')) {
+  if (filename.includes('/') || filename.includes('\\') || [...filename].some(isControlCharacter)) {
     throw new ValidationError('Invalid filename.', [
-      { path: 'files', reason: 'path separators are not allowed' },
+      { path: 'files', reason: 'path separators and control characters are not allowed' },
     ]);
   }
   const normalized = filename.normalize('NFC').toLowerCase();
@@ -498,6 +504,11 @@ function validateFilename(filename: string, seen: Set<string>): string {
   }
   seen.add(normalized);
   return filename;
+}
+
+function isControlCharacter(value: string): boolean {
+  const codePoint = value.codePointAt(0) ?? 0;
+  return (codePoint >= 0x00 && codePoint <= 0x1f) || (codePoint >= 0x7f && codePoint <= 0x9f);
 }
 
 /** Stream one artifact into storage while hashing and enforcing live limits. */

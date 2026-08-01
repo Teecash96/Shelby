@@ -42,7 +42,11 @@ function formData(
     }),
   );
   for (const file of files) {
-    form.append('files', new Blob([file.content as BlobPart]), file.filename);
+    form.append(
+      'files',
+      new Blob([file.content as BlobPart], { type: file.contentType }),
+      file.filename,
+    );
   }
   return form;
 }
@@ -618,6 +622,49 @@ describe('POST /api/v1/seal concurrency', () => {
 });
 
 describe('security review fixes', () => {
+  it('rejects filename control characters at the multipart boundary', async () => {
+    const form = formData([
+      {
+        name: 'control.txt',
+        filename: `control\u0001.txt`,
+        contentType: 'text/plain',
+        content: new TextEncoder().encode('x'),
+      },
+    ]);
+    const res = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': 'api-filename-control-001' },
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.message).toBe('Invalid filename.');
+  });
+
+  it('rejects media types outside the manifest grammar before writing an artifact', async () => {
+    const form = formData([
+      {
+        name: 'malformed.txt',
+        filename: 'malformed.txt',
+        contentType: 'text/plain/extra',
+        content: new TextEncoder().encode('x'),
+      },
+    ]);
+    const res = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEV_KEY}`,
+        'Idempotency-Key': 'api-media-parameter-001',
+      },
+      body: form,
+    });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+    expect(body.error.message).toContain('text/plain/extra');
+  });
+
   it('rejects metadata exceeding the manifest schema bounds at seal time', async () => {
     const tooMany = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`key${i}`, 'v']));
     const form = new FormData();
