@@ -77,7 +77,7 @@ function makeArtifact(overrides: Partial<ArtifactRecord> = {}): ArtifactRecord {
 
 beforeAll(() => {
   dbFile = join(mkdtempSync(join(tmpdir(), 'pv-index-')), 'index.db');
-  index = SqliteCollectionIndex.open(`file:${dbFile}`);
+  index = SqliteCollectionIndex.open(`file:${dbFile}`, { seedDevCaller: true });
 });
 
 afterAll(() => {
@@ -101,11 +101,33 @@ describe('SqliteCollectionIndex schema and migrations', () => {
     nos.close();
   });
 
-  it('seeds the dev caller by default (local development)', () => {
+  it('does not seed the dev caller by default (fail-safe default)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pv-index-default-'));
+    const seeded = SqliteCollectionIndex.open(`file:${join(dir, 'default.db')}`);
+    expect(seeded.getCaller(SEED_CALLER_ID)).toBeUndefined();
+    expect(seeded.getCallerByKeyHash(SEED_KEY_HASH)).toBeUndefined();
+    seeded.close();
+  });
+
+  it('seeds the dev caller only when seedDevCaller is true (local development)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pv-index-seed-'));
-    const seeded = SqliteCollectionIndex.open(`file:${join(dir, 'seed.db')}`);
+    const seeded = SqliteCollectionIndex.open(`file:${join(dir, 'seed.db')}`, {
+      seedDevCaller: true,
+    });
     expect(seeded.getCaller(SEED_CALLER_ID)).toBeDefined();
     seeded.close();
+  });
+
+  it('never seeds the dev caller later on a seedDevCaller-false index', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pv-index-noseed-repeat-'));
+    const nos = SqliteCollectionIndex.open(`file:${join(dir, 'noseed2.db')}`, {
+      seedDevCaller: false,
+    });
+    nos.migrate();
+    nos.migrate();
+    expect(nos.getCaller(SEED_CALLER_ID)).toBeUndefined();
+    expect(nos.getCallerByKeyHash(SEED_KEY_HASH)).toBeUndefined();
+    nos.close();
   });
 
   it('migrate is deterministic and idempotent (runs twice, same version)', async () => {

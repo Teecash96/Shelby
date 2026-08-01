@@ -32,7 +32,9 @@ async function main() {
 
   // Isolated runtime: temp storage + temp index, so proof never pollutes dev data.
   const base = mkdtempSync(join(tmpdir(), 'pv-proof-'));
-  const index = SqliteCollectionIndex.open(`file:${join(base, 'proof.db')}`);
+  const index = SqliteCollectionIndex.open(`file:${join(base, 'proof.db')}`, {
+    seedDevCaller: true,
+  });
   const app = await buildServer({
     index,
     storage: new LocalStorageAdapter(join(base, 'storage')),

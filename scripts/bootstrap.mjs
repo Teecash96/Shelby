@@ -22,7 +22,7 @@ function main() {
     mkdirSync(localDir, { recursive: true });
     console.log(`Local storage directory ready: ${localDir}`);
 
-    const index = SqliteCollectionIndex.open(config.DATABASE_URL);
+    const index = SqliteCollectionIndex.open(config.DATABASE_URL, { seedDevCaller: true });
     const version = index.migrate();
     index.close();
     console.log(`Collection index ready (schema version ${version}).`);

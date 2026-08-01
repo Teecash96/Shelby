@@ -87,15 +87,17 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
   }
 
   /**
-   * Open the database, run pending migrations, and (for local development
-   * only) seed the deterministic dev caller. Shelby deployments must not
-   * carry the known dev key.
+   * Open the database, run pending migrations. The deterministic dev caller
+   * is seeded ONLY when explicitly requested (`seedDevCaller: true`); the
+   * default is to NOT seed so a Shelby or production deployment never carries
+   * the known development API key. Local entry points (server and local
+   * scripts) opt in explicitly.
    */
   static open(
     databaseUrl: string,
     options: { seedDevCaller?: boolean } = {},
   ): SqliteCollectionIndex {
-    const seedDevCaller = options.seedDevCaller ?? true;
+    const seedDevCaller = options.seedDevCaller ?? false;
     const index = new SqliteCollectionIndex(databaseUrl, { seedDevCaller });
     index.migrate();
     return index;

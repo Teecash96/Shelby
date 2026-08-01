@@ -16,7 +16,7 @@ function main() {
   }
   console.log(`migration:replay — database=${config.DATABASE_URL}`);
 
-  const index = SqliteCollectionIndex.open(config.DATABASE_URL);
+  const index = SqliteCollectionIndex.open(config.DATABASE_URL, { seedDevCaller: true });
   const version = index.migrate();
   // Determinism check: replaying again yields the same version and the same
   // single seed caller (INSERT OR IGNORE never duplicates).

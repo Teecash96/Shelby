@@ -20,7 +20,9 @@ const OTHER_KEY = 'other-smoke-key-123456';
 
 async function main() {
   const base = mkdtempSync(join(tmpdir(), 'pv-auth-smoke-'));
-  const index = SqliteCollectionIndex.open(`file:${join(base, 'smoke.db')}`);
+  const index = SqliteCollectionIndex.open(`file:${join(base, 'smoke.db')}`, {
+    seedDevCaller: true,
+  });
   // The seeded dev caller comes from migration; add a second active caller.
   await index.upsertCaller({
     callerId: 'caller_smoke_other',
