@@ -114,8 +114,8 @@ export class ProofVaultClient {
     const sources: Array<ReadableStream<Uint8Array>> = [];
     sources.push(streamOf(header('collection', collectionJson)));
     for (const file of files) {
-      const filename = file.filename ?? basename(file.path);
-      const mediaType = file.mediaType ?? 'application/octet-stream';
+      const filename = sanitizeFilename(file.filename ?? basename(file.path));
+      const mediaType = sanitizeMediaType(file.mediaType ?? 'application/octet-stream');
       sources.push(streamOf(fileHeader(filename, mediaType)));
       sources.push(Readable.toWeb(createReadStream(file.path)) as ReadableStream<Uint8Array>);
       sources.push(streamOf(encoder.encode('\r\n')));
@@ -211,6 +211,44 @@ function toApiError(status: number, response: unknown): ApiError {
   return new ApiError(status, envelope);
 }
 
+/** Reject filenames that could inject into a multipart Content-Disposition
+ * header (quotes, CR/LF) or contain path separators. Throws a usage error
+ * before any request is sent. Exported for the regression test. */
+export function sanitizeFilename(filename: string): string {
+  if (filename.length === 0 || filename.length > 255) {
+    throw new Error(`invalid filename: must be 1-255 characters (got ${filename.length})`);
+  }
+  if (/["\r\n]/.test(filename)) {
+    throw new Error(
+      `invalid filename: quotes and control characters are not allowed: ${JSON.stringify(filename)}`,
+    );
+  }
+  if (filename.includes('/') || filename.includes('\\')) {
+    throw new Error(
+      `invalid filename: path separators are not allowed: ${JSON.stringify(filename)}`,
+    );
+  }
+  return filename;
+}
+
+/**
+ * Reject media types that could inject into a Content-Type header (CR/LF) or
+ * are not a valid type/subtype token pair. Throws a usage error before any
+ * request is sent. Exported for the regression test.
+ */
+export function sanitizeMediaType(mediaType: string): string {
+  if (mediaType.length === 0 || mediaType.length > 127) {
+    throw new Error(`invalid media type: must be 1-127 characters`);
+  }
+  if (/[\r\n]/.test(mediaType)) {
+    throw new Error(`invalid media type: control characters are not allowed`);
+  }
+  if (!/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(mediaType)) {
+    throw new Error(`invalid media type: expected type/subtype (got ${JSON.stringify(mediaType)})`);
+  }
+  return mediaType;
+}
+
 /** A single-chunk web stream. */
 function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
@@ -221,26 +259,42 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
-/** Concatenate web streams in order without buffering them whole. */
-function concatStreams(sources: ReadableStream<Uint8Array>[]): ReadableStream<Uint8Array> {
+/**
+ * Concatenate web streams in order without buffering them whole. Reads one
+ * chunk per pull so the underlying sources are only advanced when the
+ * consumer wants data (backpressure preserved); a pull stops after enqueueing
+ * a single chunk, and the next pull resumes from where it left off. A done
+ * source advances to the next source immediately (empty sources are skipped
+ * without stalling).
+ * Exported for the backpressure regression test.
+ */
+export function concatStreams(sources: ReadableStream<Uint8Array>[]): ReadableStream<Uint8Array> {
   let index = 0;
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  async function advance(controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
+    for (;;) {
       if (index >= sources.length) {
         controller.close();
         return;
       }
-      const reader = sources[index]!.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-          await reader.releaseLock();
-          index += 1;
-          return;
-        }
-        controller.enqueue(value);
+      if (reader === null) {
+        reader = sources[index]!.getReader();
       }
-    },
+      const { done, value } = await reader!.read();
+      if (done) {
+        await reader!.releaseLock();
+        reader = null;
+        index += 1;
+        continue;
+      }
+      controller.enqueue(value);
+      return;
+    }
+  }
+
+  return new ReadableStream<Uint8Array>({
+    pull: (controller) => advance(controller),
   });
 }
 

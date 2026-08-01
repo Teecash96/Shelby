@@ -93,10 +93,11 @@ export class LocalStorageAdapter implements StoragePort {
       throw error;
     }
     // Content type is persisted as a sidecar claim (metadata, not proof).
+    // Owner-only: filenames/content types in the sidecar are private metadata.
     await writeFile(
       metaPath,
       JSON.stringify({ contentType: input.contentType, expiresAt: input.expiresAt }),
-      { encoding: 'utf8' },
+      { encoding: 'utf8', mode: 0o600 },
     );
     await rename(tempPath, finalPath);
 

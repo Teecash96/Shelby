@@ -22,6 +22,7 @@ import {
   emitSuccess,
   emitFailure,
   failureFrom,
+  exitCodeFor,
   EXIT_OK,
   EXIT_DOMAIN,
   EXIT_TRANSPORT,
@@ -58,10 +59,35 @@ function parseArgs(argv: string[], outFlag: string): ParsedArgs {
   return { json, idempotencyKey, outPath, positionals };
 }
 
+/** Loopback hosts are safe to default to the local dev key; anything else must
+ * supply an explicit PROOFVAULT_API_KEY (never the dev key off-loopback). */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    // new URL keeps brackets on IPv6 hostnames; strip them before comparing.
+    const hostname = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the API key for a CLI invocation: an explicit env key always wins;
+ * otherwise the dev key is used only for loopback hosts. Exported for the
+ * regression test.
+ */
+export function resolveApiKey(envKey: string | undefined, baseUrl: string): string {
+  if (envKey !== undefined && envKey !== '') return envKey;
+  if (isLoopbackUrl(baseUrl)) return DEV_LOCAL_KEY;
+  throw new Error(
+    `PROOFVAULT_API_KEY is required when PROOFVAULT_BASE_URL (${baseUrl}) is not a loopback address; refusing to use the development key.`,
+  );
+}
+
 function clientFor(): ProofVaultClient {
   const config = loadConfig();
   const baseUrl = process.env.PROOFVAULT_BASE_URL ?? `http://127.0.0.1:${config.PORT}`;
-  const apiKey = process.env.PROOFVAULT_API_KEY ?? DEV_LOCAL_KEY;
+  const apiKey = resolveApiKey(process.env.PROOFVAULT_API_KEY, baseUrl);
   return new ProofVaultClient({
     baseUrl,
     apiKey,
@@ -107,7 +133,8 @@ async function cmdSeal(argv: string[]): Promise<number> {
       return lines.join('\n');
     });
   } catch (error) {
-    return emitFailure(failureFrom(error), args.json);
+    emitFailure(failureFrom(error), args.json);
+    return exitCodeFor(error);
   }
 }
 
@@ -133,7 +160,8 @@ async function cmdVerify(argv: string[]): Promise<number> {
     // verified -> 0; domain results (incomplete/invalid/expired) -> 1.
     return body.result === 'verified' ? ok : EXIT_DOMAIN;
   } catch (error) {
-    return emitFailure(failureFrom(error), args.json);
+    emitFailure(failureFrom(error), args.json);
+    return exitCodeFor(error);
   }
 }
 
@@ -158,7 +186,8 @@ async function cmdRecoverArtifact(argv: string[]): Promise<number> {
       (d) => `artifact ${d.artifactId} written to ${d.out}`,
     );
   } catch (error) {
-    return emitFailure(failureFrom(error), args.json);
+    emitFailure(failureFrom(error), args.json);
+    return exitCodeFor(error);
   }
 }
 
@@ -179,7 +208,8 @@ async function cmdRecoverPackage(argv: string[]): Promise<number> {
       (d) => `evidence package written to ${d.out}`,
     );
   } catch (error) {
-    return emitFailure(failureFrom(error), args.json);
+    emitFailure(failureFrom(error), args.json);
+    return exitCodeFor(error);
   }
 }
 

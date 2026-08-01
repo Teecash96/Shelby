@@ -148,6 +148,62 @@ describe('LocalStorageAdapter permissions', () => {
       await cleanup();
     }
   });
+
+  it('creates metadata sidecars owner-only', async () => {
+    const { dir, cleanup } = await (async () => {
+      const d = await mkdtemp(join(tmpdir(), 'pv-perms-meta-'));
+      return { dir: join(d, 'data'), cleanup: () => rm(d, { recursive: true, force: true }) };
+    })();
+    try {
+      const adapter = new LocalStorageAdapter(dir);
+      await adapter.put({
+        key: 'collections/c/y',
+        body: (async function* () {
+          yield new TextEncoder().encode('bytes');
+        })(),
+        contentType: 'text/plain',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+        idempotencyKey: 'idem-perms-meta',
+      });
+      const { stat } = await import('node:fs/promises');
+      const metaMode = (await stat(join(dir, 'collections', 'c', 'y.meta.json'))).mode & 0o777;
+      expect(metaMode & 0o077).toBe(0); // owner-only sidecar
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('leaves a pre-existing data root mode untouched (existing-root behavior)', async () => {
+    const { dir, cleanup } = await (async () => {
+      const d = await mkdtemp(join(tmpdir(), 'pv-perms-root-'));
+      return { dir: join(d, 'data'), cleanup: () => rm(d, { recursive: true, force: true }) };
+    })();
+    try {
+      // Pre-create the root with a permissive mode; the adapter must not
+      // tighten it (recursive mkdir only applies mode to new dirs).
+      const { mkdir, chmod } = await import('node:fs/promises');
+      await mkdir(dir, { recursive: true });
+      await chmod(dir, 0o755);
+      const adapter = new LocalStorageAdapter(dir);
+      await adapter.put({
+        key: 'collections/c/z',
+        body: (async function* () {
+          yield new TextEncoder().encode('z');
+        })(),
+        contentType: 'text/plain',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+        idempotencyKey: 'idem-perms-root',
+      });
+      const { stat } = await import('node:fs/promises');
+      const rootMode = (await stat(dir)).mode & 0o777;
+      expect(rootMode).toBe(0o755); // unchanged
+      // But newly created subdirectories are owner-only.
+      const subMode = (await stat(join(dir, 'collections', 'c'))).mode & 0o777;
+      expect(subMode & 0o077).toBe(0);
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 describe('LocalStorageAdapter traversal and symlink defense', () => {

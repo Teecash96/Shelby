@@ -68,7 +68,15 @@ export function isApiError(error: unknown): boolean {
   return (error as { name?: string }).name === 'ApiError';
 }
 
-/** Transport-level failures (network, malformed response) exit 2. */
-export function transportExitCode(): number {
+/**
+ * Resolve the CLI exit code for a failure:
+ * - API domain failures (4xx, e.g. 401/403/404/409/413) -> 1 (EXIT_DOMAIN)
+ * - transport/server failures (network errors, non-ApiError, 5xx) -> 2 (EXIT_TRANSPORT)
+ */
+export function exitCodeFor(error: unknown): number {
+  if (isApiError(error)) {
+    const status = (error as { status?: number }).status ?? 0;
+    return status >= 500 ? EXIT_TRANSPORT : EXIT_DOMAIN;
+  }
   return EXIT_TRANSPORT;
 }
