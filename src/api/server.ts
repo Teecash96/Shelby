@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import multipart from '@fastify/multipart';
 import { authenticateCaller } from '../application/auth.js';
@@ -329,7 +330,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     );
     reply.header('ETag', `"${artifact.sha256}"`);
     reply.header('X-Content-Type-Options', 'nosniff');
-    return reply.send(fetched.body);
+    return reply.send(toNodeReadable(fetched.body));
   });
 
   app.post('/api/v1/packages/:collectionId', async (request, reply) => {
@@ -352,7 +353,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     reply.header('Content-Type', 'application/zip');
     reply.header('Content-Disposition', 'attachment; filename="evidence.zip"');
     reply.header('X-Content-Type-Options', 'nosniff');
-    return reply.send(zipStream);
+    return reply.send(toNodeReadable(zipStream));
   });
 
   return app;
@@ -494,3 +495,31 @@ function mapTransportError(
 }
 
 export type { VerificationReport };
+
+/**
+ * Convert a web ReadableStream or async iterable into a Node Readable for
+ * Fastify `reply.send`. Fastify stringifies web ReadableStreams it cannot
+ * identify, which silently corrupts artifact/package downloads.
+ */
+function toNodeReadable(
+  body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
+): Readable {
+  if (Symbol.asyncIterator in Object(body)) {
+    return Readable.from(body as AsyncIterable<Uint8Array>);
+  }
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  return Readable.from({
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<Uint8Array>> {
+          const { done, value } = await reader.read();
+          if (done) {
+            await reader.releaseLock();
+            return { done: true, value: undefined };
+          }
+          return { done: false, value };
+        },
+      };
+    },
+  });
+}

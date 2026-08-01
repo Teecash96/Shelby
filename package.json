@@ -22,7 +22,8 @@
     "migration:replay": "node scripts/migration-replay.mjs",
     "auth:smoke": "node scripts/auth-smoke.mjs",
     "runtime:proof": "node scripts/runtime-proof.mjs",
-    "start": "node dist/src/index.js"
+    "start": "node dist/src/index.js",
+    "cli": "node dist/src/cli/index.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
