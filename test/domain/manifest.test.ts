@@ -9,7 +9,8 @@ import {
 } from '../../src/domain/manifest.js';
 import { receiptSchema } from '../../src/domain/receipt.js';
 
-const sha256Hex = (input: string): string => createHash('sha256').update(input, 'utf8').digest('hex');
+const sha256Hex = (input: string): string =>
+  createHash('sha256').update(input, 'utf8').digest('hex');
 
 /**
  * Loose override types let the rejection tables supply intentionally invalid
@@ -55,11 +56,15 @@ describe('canonical JSON', () => {
   });
 
   it('recursively canonicalizes nested objects and arrays', () => {
-    expect(canonicalJson({ b: { d: 1, c: [2, 1] }, a: null })).toBe('{"a":null,"b":{"c":[2,1],"d":1}}');
+    expect(canonicalJson({ b: { d: 1, c: [2, 1] }, a: null })).toBe(
+      '{"a":null,"b":{"c":[2,1],"d":1}}',
+    );
   });
 
   it('uses the four mandatory escapes and unicode escapes for control characters', () => {
-    expect(canonicalJson({ q: '"\\\b\f\n\r\t\u0001' })).toBe('{"q":"\\"\\\\\\b\\f\\n\\r\\t\\u0001"}');
+    expect(canonicalJson({ q: '"\\\b\f\n\r\t\u0001' })).toBe(
+      '{"q":"\\"\\\\\\b\\f\\n\\r\\t\\u0001"}',
+    );
   });
 
   it('emits lowercase hexadecimal unicode escapes for lone surrogates', () => {
@@ -112,7 +117,10 @@ describe('manifest schema', () => {
     ['createdAt not a timestamp', makeManifest({ createdAt: 'not-a-date' })],
     ['expiresAt without offset', makeManifest({ expiresAt: '2026-09-30T12:00:00' })],
     ['no artifacts', makeManifest({ artifacts: [] })],
-    ['too many artifacts', makeManifest({ artifacts: Array.from({ length: 21 }, () => makeArtifact()) })],
+    [
+      'too many artifacts',
+      makeManifest({ artifacts: Array.from({ length: 21 }, () => makeArtifact()) }),
+    ],
   ])('rejects %s', (_label, manifest) => {
     expect(() => manifestSchema.parse(manifest)).toThrow();
   });
@@ -134,7 +142,9 @@ describe('manifest schema', () => {
     ['missing storageKey', { storageKey: '' }],
     ['unexpected field', { extra: true }],
   ])('rejects artifact with %s', (_label, overrides: LooseArtifactOverrides) => {
-    expect(() => manifestSchema.parse(makeManifest({ artifacts: [makeArtifact(overrides)] }))).toThrow();
+    expect(() =>
+      manifestSchema.parse(makeManifest({ artifacts: [makeArtifact(overrides)] })),
+    ).toThrow();
   });
 
   it('rejects unknown top-level fields', () => {
@@ -154,7 +164,9 @@ describe('manifest schema', () => {
 
   it('rejects a manifest with duplicate artifactIds', () => {
     const artifact = makeArtifact();
-    const manifest = makeManifest({ artifacts: [artifact, { ...artifact, filename: 'other.pdf' }] });
+    const manifest = makeManifest({
+      artifacts: [artifact, { ...artifact, filename: 'other.pdf' }],
+    });
     expect(() => manifestSchema.parse(manifest)).not.toThrow();
   });
 });
@@ -210,7 +222,9 @@ describe('canonical manifest digest (golden vectors)', () => {
     });
     const manifestA = byId(makeManifest({ artifacts: [a1, a2] }));
     const manifestB = byId(makeManifest({ artifacts: [a2, a1] }));
-    expect(sha256Hex(canonicalManifestJson(manifestA))).toBe(sha256Hex(canonicalManifestJson(manifestB)));
+    expect(sha256Hex(canonicalManifestJson(manifestA))).toBe(
+      sha256Hex(canonicalManifestJson(manifestB)),
+    );
   });
 });
 

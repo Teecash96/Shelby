@@ -91,6 +91,23 @@ describe('SqliteCollectionIndex schema and migrations', () => {
     expect(version).toBe(1);
   });
 
+  it('does not seed the dev caller when seedDevCaller is false (Shelby deployments)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pv-index-noseed-'));
+    const nos = SqliteCollectionIndex.open(`file:${join(dir, 'noseed.db')}`, {
+      seedDevCaller: false,
+    });
+    expect(nos.getCaller(SEED_CALLER_ID)).toBeUndefined();
+    expect(nos.getCallerByKeyHash(SEED_KEY_HASH)).toBeUndefined();
+    nos.close();
+  });
+
+  it('seeds the dev caller by default (local development)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pv-index-seed-'));
+    const seeded = SqliteCollectionIndex.open(`file:${join(dir, 'seed.db')}`);
+    expect(seeded.getCaller(SEED_CALLER_ID)).toBeDefined();
+    seeded.close();
+  });
+
   it('migrate is deterministic and idempotent (runs twice, same version)', async () => {
     const first = await index.migrate();
     const second = await index.migrate();

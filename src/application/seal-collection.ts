@@ -126,6 +126,11 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
   // Note: claim.replay is intentionally NOT acted on here. The incoming
   // request digest is provisional until artifacts are hashed, so replay vs
   // conflict is decided by the post-stream digest comparison below.
+  // The winner of the atomic claim is the request whose collectionId matches
+  // the stored claim row; only it may beginSeal (avoids the UNIQUE race).
+  const winningCollectionId =
+    claim.claim?.winningCollectionId ?? claim.winningCollectionId ?? claim.claim?.collectionId;
+  const iWonClaim = winningCollectionId === collectionId;
 
   const pending: PendingSeal = {
     name: '',
@@ -248,6 +253,20 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
     );
   }
 
+  // Only the atomic claim winner may persist the collection. A loser that
+  // reached this point raced the winner's commit; wait briefly for the winner
+  // to seal (replay) or report a conflict. Without this gate, two same-key
+  // requests both reach beginSeal and the UNIQUE(caller_id, idempotency_key)
+  // constraint turns into a 500.
+  if (!iWonClaim) {
+    const winnerSealed = await waitForWinnerSeal(deps, request, requestDigest);
+    if (winnerSealed !== undefined) return winnerSealed;
+    throw new ProofVaultError(
+      'IDEMPOTENCY_CONFLICT',
+      'Idempotency-Key was already used with a different request.',
+    );
+  }
+
   await deps.index.setIdempotencyDigest({
     callerId: request.callerId,
     idempotencyKey: request.idempotencyKey,
@@ -306,6 +325,34 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
       sha256: a.sha256,
     })),
   };
+}
+
+/**
+ * Bounded wait for the atomic claim winner to seal the collection. Returns a
+ * replay result when the winner sealed with the same digest, or undefined when
+ * the wait expires (the caller should report a conflict).
+ */
+async function waitForWinnerSeal(
+  deps: SealDeps,
+  request: SealRequest,
+  requestDigest: string,
+): Promise<SealResult | undefined> {
+  const deadline = Date.now() + 5000;
+  const pollIntervalMs = 25;
+  while (Date.now() < deadline) {
+    const sealed = await deps.index.findSealedByIdempotencyKey(
+      request.callerId,
+      request.idempotencyKey,
+    );
+    if (sealed !== undefined && sealed.collection.receiptJson !== null) {
+      if (sealed.collection.requestDigest === requestDigest) {
+        return replayResult(sealed);
+      }
+      return undefined;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return undefined;
 }
 
 function replayResult(snapshot: {

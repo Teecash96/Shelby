@@ -116,7 +116,9 @@ describe('assertCollectionOwner', () => {
   const alice = { callerId: 'caller_alice' } as CallerRecord;
 
   it('passes when the caller owns the collection', () => {
-    expect(() => assertCollectionOwner('caller_alice', alice, 'col_1234567890abcdef')).not.toThrow();
+    expect(() =>
+      assertCollectionOwner('caller_alice', alice, 'col_1234567890abcdef'),
+    ).not.toThrow();
   });
 
   it('raises COLLECTION_NOT_FOUND (not FORBIDDEN) for another callers object', () => {

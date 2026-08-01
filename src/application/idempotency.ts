@@ -69,8 +69,11 @@ export interface IdempotencyOutcome {
    * True when another caller owns the claim and this caller must stream its
    * request anyway (provisional-digest flow); the caller's post-stream digest
    * comparison decides replay vs conflict. Never combined with proceed.
+   * `winningCollectionId` is the collectionId stored on the claim row: the
+   * single caller whose id matches it may beginSeal; everyone else must not.
    */
   pending?: boolean;
+  winningCollectionId?: string;
 }
 
 /**
@@ -113,8 +116,9 @@ export async function claimIdempotency(input: {
     // Existing claim is not sealed and not a conflict.
     if (isProvisionalDigest(requestDigest)) {
       // Provisional flow (seal service): stream anyway; the post-stream
-      // digest comparison decides replay vs conflict. Never a second winner.
-      return { proceed: false, pending: true };
+      // digest comparison decides replay vs conflict. The stored claim row's
+      // collectionId is the single winner allowed to beginSeal.
+      return { proceed: false, pending: true, winningCollectionId: existing.collectionId };
     }
     return waitForResolution(
       index,
@@ -157,8 +161,10 @@ export async function claimIdempotency(input: {
     return { proceed: false, conflict: true };
   }
   if (isProvisionalDigest(requestDigest)) {
-    // Provisional flow: stream anyway; post-stream comparison decides.
-    return { proceed: false, pending: true };
+    // Provisional flow: stream anyway; post-stream comparison decides. The
+    // stored claim row's collectionId is the single winner allowed to
+    // beginSeal.
+    return { proceed: false, pending: true, winningCollectionId: claim.collectionId };
   }
   return waitForResolution(index, callerId, idempotencyKey, requestDigest, waitMs, pollIntervalMs);
 }

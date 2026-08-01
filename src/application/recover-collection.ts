@@ -43,6 +43,15 @@ export async function getManifest(
     offset += chunk.byteLength;
   }
   const manifestSha256 = await sha256Hex(merged);
+  // The receipt's manifest digest is the integrity anchor: a schema-valid but
+  // tampered manifest must never be served. Digest mismatch is
+  // indistinguishable from an absent collection.
+  if (manifestSha256 !== receipt.manifestSha256) {
+    throw new ProofVaultError(
+      'COLLECTION_NOT_FOUND',
+      `No such collection: ${receipt.collectionId}`,
+    );
+  }
   const parsed = manifestSchema.safeParse(JSON.parse(new TextDecoder().decode(merged)));
   if (!parsed.success) {
     throw new ProofVaultError(

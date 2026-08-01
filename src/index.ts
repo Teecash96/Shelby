@@ -37,7 +37,11 @@ async function main(): Promise<void> {
   const logger = createLogger(config.LOG_LEVEL);
 
   const storage = createStorage(config);
-  const index = SqliteCollectionIndex.open(config.DATABASE_URL);
+  // The dev API key is local-development only: never seed it into a Shelby
+  // deployment's index.
+  const index = SqliteCollectionIndex.open(config.DATABASE_URL, {
+    seedDevCaller: config.STORAGE_DRIVER === 'local',
+  });
   const server = await buildServer({
     index,
     storage,

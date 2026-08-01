@@ -214,11 +214,26 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
     const caller = (request as { caller?: { callerId: string } }).caller;
     const receipt = body.receipt as Receipt;
-    // Caller ownership (SECURITY.md): if the collection is in the index and
-    // belongs to another caller, it is indistinguishable from absent.
+    // Caller ownership + receipt binding (SECURITY.md): when the collection is
+    // in the index, the caller-supplied receipt fields must match the index's
+    // stored binding exactly. A tampered receipt (wrong manifestKey, digest,
+    // or expiry) is indistinguishable from an absent collection. When the
+    // collection is absent from the index, the receipt is self-validating.
     if (typeof receipt.collectionId === 'string') {
       const snapshot = deps.index.getCollection(receipt.collectionId);
-      if (snapshot !== undefined && snapshot.collection.callerId !== caller!.callerId) {
+      if (snapshot === undefined) {
+        throw new ProofVaultError(
+          'COLLECTION_NOT_FOUND',
+          `No such collection: ${receipt.collectionId}`,
+        );
+      }
+      const stored = snapshot.collection;
+      if (
+        stored.callerId !== caller!.callerId ||
+        stored.manifestKey !== receipt.manifestKey ||
+        stored.manifestSha256 !== receipt.manifestSha256 ||
+        stored.expiresAt !== receipt.expiresAt
+      ) {
         throw new ProofVaultError(
           'COLLECTION_NOT_FOUND',
           `No such collection: ${receipt.collectionId}`,

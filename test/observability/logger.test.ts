@@ -12,7 +12,9 @@ function asArray(value: unknown): Record<string, unknown>[] {
 
 describe('redact (log redaction)', () => {
   it('redacts authorization headers and API keys at the top level', () => {
-    const out = asRecord(redact({ Authorization: 'Bearer secret-key', 'x-api-key': 'k', safe: 'ok' }));
+    const out = asRecord(
+      redact({ Authorization: 'Bearer secret-key', 'x-api-key': 'k', safe: 'ok' }),
+    );
     expect(out.Authorization).toBe('[REDACTED]');
     expect(out['x-api-key']).toBe('[REDACTED]');
     expect(out.safe).toBe('ok');
@@ -35,7 +37,12 @@ describe('redact (log redaction)', () => {
   });
 
   it('redacts full receipt objects by field name', () => {
-    const out = asRecord(redact({ receipt: { manifestSha256: 'abc', token: 'jwt' }, metadata: { apiKey: 'secret-123' } }));
+    const out = asRecord(
+      redact({
+        receipt: { manifestSha256: 'abc', token: 'jwt' },
+        metadata: { apiKey: 'secret-123' },
+      }),
+    );
     expect(asRecord(out.receipt).token).toBe('[REDACTED]');
     expect(asRecord(out.metadata).apiKey).toBe('[REDACTED]');
   });

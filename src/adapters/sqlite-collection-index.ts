@@ -73,8 +73,10 @@ interface IdempotencyRow {
 
 export class SqliteCollectionIndex implements CollectionIndexPort {
   private readonly db: DatabaseSync;
+  private readonly seedDevCaller: boolean;
 
-  private constructor(databaseUrl: string) {
+  private constructor(databaseUrl: string, options: { seedDevCaller: boolean }) {
+    this.seedDevCaller = options.seedDevCaller;
     const file = databaseUrl.replace(/^file:/, '');
     if (file !== ':memory:') {
       mkdirSync(dirname(file), { recursive: true });
@@ -84,9 +86,17 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
     this.db.exec('PRAGMA journal_mode = WAL;');
   }
 
-  /** Open the database, run pending migrations, seed deterministic data. */
-  static open(databaseUrl: string): SqliteCollectionIndex {
-    const index = new SqliteCollectionIndex(databaseUrl);
+  /**
+   * Open the database, run pending migrations, and (for local development
+   * only) seed the deterministic dev caller. Shelby deployments must not
+   * carry the known dev key.
+   */
+  static open(
+    databaseUrl: string,
+    options: { seedDevCaller?: boolean } = {},
+  ): SqliteCollectionIndex {
+    const seedDevCaller = options.seedDevCaller ?? true;
+    const index = new SqliteCollectionIndex(databaseUrl, { seedDevCaller });
     index.migrate();
     return index;
   }
@@ -162,7 +172,9 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
         throw error;
       }
     }
-    this.seed();
+    if (this.seedDevCaller) {
+      this.seed();
+    }
     return LATEST_SCHEMA_VERSION;
   }
 

@@ -449,6 +449,9 @@ describe('POST /api/v1/seal concurrency', () => {
     const statuses = await Promise.all(results.map((r) => r.status));
     expect(statuses.filter((s) => s === 201)).toHaveLength(1);
     expect(statuses.filter((s) => s === 200)).toHaveLength(3);
+    // The loser of the concurrent claim must never surface a 500 (the UNIQUE
+    // constraint race); only the winner persists, everyone else replays.
+    expect(statuses.filter((s) => s >= 500)).toHaveLength(0);
   });
 });
 
@@ -572,5 +575,70 @@ describe('security review fixes', () => {
       await rlApp.close();
       rlIndex.close();
     }
+  });
+
+  it('verify rejects a tampered receipt that no longer matches the index binding', async () => {
+    const sealRes = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': 'api-verify-tampered-001' },
+      body: formData([
+        { name: 'a.txt', filename: 'a.txt', contentType: 'text/plain', content: ARTIFACT_ONE },
+      ]),
+    });
+    const sealed = (await sealRes.json()) as {
+      receipt: {
+        collectionId: string;
+        manifestKey: string;
+        manifestSha256: string;
+        expiresAt: string;
+      };
+    };
+    // Tamper with the manifest digest in the receipt: the index binding is
+    // authoritative, so verify must 404 (indistinguishable from absent).
+    const tampered = {
+      ...sealed.receipt,
+      manifestSha256: 'f'.repeat(64),
+    };
+    const res = await fetch(`${baseUrl()}/api/v1/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receipt: tampered }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('COLLECTION_NOT_FOUND');
+  });
+
+  it('recovery serves 404 for a schema-valid but tampered manifest', async () => {
+    const sealRes = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEV_KEY}`,
+        'Idempotency-Key': 'api-manifest-tampered-001',
+      },
+      body: formData([
+        { name: 'a.txt', filename: 'a.txt', contentType: 'text/plain', content: ARTIFACT_ONE },
+      ]),
+    });
+    const sealed = (await sealRes.json()) as {
+      collectionId: string;
+      receipt: { manifestKey: string };
+      artifacts: Array<{ artifactId: string }>;
+    };
+    // Replace the stored manifest bytes with a schema-valid but different
+    // manifest; the receipt's digest no longer matches.
+    const manifestPath = join(storageDir, sealed.receipt.manifestKey);
+    const { writeFile, readFile } = await import('node:fs/promises');
+    const original = await readFile(manifestPath);
+    const tamperedManifest = JSON.parse(new TextDecoder().decode(original));
+    tamperedManifest.name = 'TAMPERED';
+    await writeFile(manifestPath, new TextEncoder().encode(JSON.stringify(tamperedManifest)));
+
+    const res = await fetch(`${baseUrl()}/api/v1/manifests/${sealed.collectionId}`, {
+      headers: { Authorization: `Bearer ${DEV_KEY}` },
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('COLLECTION_NOT_FOUND');
   });
 });

@@ -23,7 +23,9 @@ describe('loadConfig', () => {
   });
 
   it('fails closed for shelby when required variables are missing', () => {
-    expect(() => loadConfig({ STORAGE_DRIVER: 'shelby' })).toThrow(/Shelby driver selected but environment is incomplete/);
+    expect(() => loadConfig({ STORAGE_DRIVER: 'shelby' })).toThrow(
+      /Shelby driver selected but environment is incomplete/,
+    );
   });
 
   it('fails closed for shelby with an invalid network', () => {

@@ -174,6 +174,21 @@ export class ShelbyStorageAdapter implements StoragePort {
             `(tx ${commitTx.hash}). Real testnet evidence required; nothing is fabricated.`,
         );
       }
+      // A rejected commit is still a successful transaction: the contract
+      // tears down the pending blob and emits ObjectCommitRejectedEvent
+      // instead of aborting. Treat it as a failure so a silent no-op is never
+      // reported as a durable write.
+      const rejection = ShelbyBlobClient.findObjectCommitRejection(
+        confirmed.events ?? [],
+        this.coordination.deployer,
+        uid,
+      );
+      if (rejection !== undefined) {
+        throw new Error(
+          `Shelby commit for "${blobName}" was rejected on chain ` +
+            `(${rejection}, tx ${commitTx.hash}). The write was not applied; nothing is fabricated.`,
+        );
+      }
 
       const providerRef = `${this.accountAddressHex}:${blobName}#tx:${commitTx.hash}`;
       return { key: input.key, size, providerRef };
