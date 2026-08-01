@@ -46,9 +46,10 @@ import type { StoragePort, StoragePutInput, StoragePutResult } from '../ports/st
  */
 
 export interface ShelbyAdapterConfig {
-  network: 'testnet';
+  /** shelbynet matches the SDK's native payload ABI; testnet needs the fallback. */
+  network: 'testnet' | 'shelbynet';
   rpcBaseUrl: string;
-  /** Optional: the testnet RPC accepts anonymous challenges; present when set. */
+  /** Optional: the RPC accepts anonymous challenges (rate-limited); present when set. */
   rpcApiKey?: string;
   indexerBaseUrl?: string;
   indexerApiKey?: string;
@@ -58,8 +59,9 @@ export interface ShelbyAdapterConfig {
   accountPrivateKey: string;
   /**
    * Best-effort region hint sent with every blob registration. The SDK passes
-   * null for both location fields when unset, which the Aptos ABI rejects; a
-   * hint makes registration buildable. Honored for FollowHint accounts.
+   * null for both location fields when unset; shelbynet's ABI carries the
+   * Option<String> location params, so a hint is honored for FollowHint
+   * accounts.
    */
   locationHint?: string;
 }
@@ -92,7 +94,7 @@ export class ShelbyStorageAdapter implements StoragePort {
     this.accountAddressHex = this.account.accountAddress.toString();
 
     const client = new ShelbyNodeClient({
-      network: Network.TESTNET,
+      network: config.network === 'shelbynet' ? Network.SHELBYNET : Network.TESTNET,
       apiKey: config.rpcApiKey,
       rpc: { baseUrl: config.rpcBaseUrl, apiKey: config.rpcApiKey },
       indexer: config.indexerBaseUrl

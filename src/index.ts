@@ -19,7 +19,7 @@ export function createStorage(config: AppConfig): StoragePort {
     return new LocalStorageAdapter(config.LOCAL_STORAGE_DIR);
   }
   const shelbyConfig: ShelbyAdapterConfig = {
-    network: 'testnet',
+    network: config.SHELBY_NETWORK,
     rpcBaseUrl: config.SHELBY_RPC_ENDPOINT,
     rpcApiKey: config.SHELBY_API_KEY,
     aptosFullnodeEndpoint: config.APTOS_FULLNODE_ENDPOINT,

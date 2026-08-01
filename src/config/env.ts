@@ -31,11 +31,14 @@ const shelbySchema = commonSchema.extend({
   // The collection index is always SQLite for now (ARCHITECTURE.md); the
   // artifact backend is Shelby.
   DATABASE_URL: z.string().min(1).default('file:.proofvault/proofvault.db'),
-  SHELBY_NETWORK: z.literal('testnet'),
+  // Both testnet and shelbynet are supported. The public faucets mint on
+  // shelbynet; testnet requires a funded account or the gated faucet UI.
+  SHELBY_NETWORK: z.enum(['testnet', 'shelbynet']),
   SHELBY_RPC_ENDPOINT: z.string().url(),
   APTOS_FULLNODE_ENDPOINT: z.string().url(),
   APTOS_INDEXER_ENDPOINT: z.string().url(),
-  // The testnet RPC accepts anonymous challenges; the API key is optional.
+  // The RPC accepts anonymous challenges (rate-limited per IP); an API key is
+  // recommended for sustained use.
   SHELBY_API_KEY: z.string().optional(),
   // Best-effort region hint for blob registration (required for writes).
   SHELBY_LOCATION_HINT: z.string().optional(),

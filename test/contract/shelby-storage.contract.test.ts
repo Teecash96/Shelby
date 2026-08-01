@@ -36,11 +36,13 @@ export function shelbyConfigFromEnv(
   for (const key of required) {
     if (env[key] === undefined || env[key] === '') return undefined;
   }
-  if (env.SHELBY_NETWORK !== 'testnet') return undefined;
+  const network = env.SHELBY_NETWORK;
+  if (network !== 'testnet' && network !== 'shelbynet') return undefined;
   return {
-    network: 'testnet',
+    network,
     rpcBaseUrl: env.SHELBY_RPC_ENDPOINT!,
-    // The testnet RPC accepts anonymous challenges; the API key is optional.
+    // The RPC accepts anonymous challenges (rate-limited); the API key is
+    // optional.
     rpcApiKey:
       env.SHELBY_API_KEY === undefined || env.SHELBY_API_KEY === ''
         ? undefined
