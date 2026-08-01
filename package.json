@@ -38,7 +38,7 @@
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@fastify/multipart": "^10.1.0",
-    "@shelby-protocol/sdk": "^0.4.0",
+    "@shelby-protocol/sdk": "^0.4.1",
     "fastify": "^5.11.0",
     "yazl": "^3.3.1",
     "zod": "^3.24.2"

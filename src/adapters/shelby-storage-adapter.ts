@@ -12,7 +12,9 @@ import {
 } from '@aptos-labs/ts-sdk';
 import {
   createDefaultErasureCodingProvider,
+  defaultErasureCodingConfig,
   DEFAULT_ERASURE_N,
+  expectedTotalChunksets,
   generateCommitments,
   requiredAckCount,
   ShelbyBlobClient,
@@ -127,13 +129,12 @@ export class ShelbyStorageAdapter implements StoragePort {
       // types it number, so the runtime contract is honored with a cast.
       const expirationMicros = BigInt(Date.parse(input.expiresAt)) * 1000n;
 
-      const { transaction: registerTx } = await this.coordination.registerBlob({
-        account: this.account,
+      const registerTx = await this.registerBlobCompat(
         blobName,
-        blobMerkleRoot: commitments.blob_merkle_root,
+        commitments.blob_merkle_root,
         size,
-        expirationMicros: expirationMicros as unknown as number,
-      });
+        expirationMicros,
+      );
 
       const uid = await this.uidFromRegistration(registerTx, blobName);
 
@@ -228,6 +229,63 @@ export class ShelbyStorageAdapter implements StoragePort {
     }
     return match.uid;
   }
+
+  /**
+   * Register a blob on chain. Prefers the SDK's registerBlob; when the SDK's
+   * payload fails the deployed contract ABI (observed on testnet: the SDK
+   * emits location args the live ABI lacks), fall back to a manually built
+   * payload matching the live ABI exactly:
+   *   register_blob(&signer, String blobName, u64 expirationMicros,
+   *                vector<u8> merkleRoot, u32 numChunksets, u64 blobSize,
+   *                u8 encoding, u8 tier)
+   * The fallback submits through the SDK's Aptos client and is verified by the
+   * same on-chain event parsing.
+   */
+  private async registerBlobCompat(
+    blobName: string,
+    blobMerkleRoot: string,
+    size: number,
+    expirationMicros: bigint,
+  ): Promise<{ hash: string }> {
+    try {
+      const { transaction } = await this.coordination.registerBlob({
+        account: this.account,
+        blobName,
+        blobMerkleRoot,
+        size,
+        expirationMicros: expirationMicros as unknown as number,
+      });
+      return transaction;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('Type mismatch for argument')) throw error;
+
+      // SDK payload ABI mismatch: build the payload to the live contract ABI.
+      const config = defaultErasureCodingConfig();
+      const chunksetSizeBytes = config.chunkSizeBytes * config.erasure_k;
+      const numChunksets = expectedTotalChunksets(size, chunksetSizeBytes);
+      const merkleRootBytes = hexToBytes(blobMerkleRoot.replace(/^0x/, ''));
+      const transaction = await this.coordination.aptos.transaction.build.simple({
+        sender: this.account.accountAddress,
+        data: {
+          function: `${this.coordination.deployer.toString()}::blob_metadata::register_blob`,
+          functionArguments: [
+            blobName,
+            expirationMicros,
+            merkleRootBytes,
+            numChunksets,
+            size,
+            config.enumIndex,
+            0, // payment tier (matching the SDK's own placeholder)
+          ],
+        },
+      });
+      return await this.coordination.aptos.transaction.signAndSubmitTransaction({
+        signer: this.account,
+        transaction,
+      });
+    }
+  }
 }
 
 /**
@@ -306,4 +364,13 @@ function toAsyncIterable(
 /** A fresh read stream over a file, as a web stream. */
 function fileStream(path: string): ReadableStream<Uint8Array> {
   return Readable.toWeb(createReadStream(path)) as ReadableStream<Uint8Array>;
+}
+
+/** Hex string to Uint8Array (even-length input). */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
 }

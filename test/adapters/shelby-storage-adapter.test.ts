@@ -4,10 +4,31 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDefaultErasureCodingProvider } from '@shelby-protocol/sdk/node';
+import {
+  createDefaultErasureCodingProvider,
+  defaultErasureCodingConfig,
+  expectedTotalChunksets,
+} from '@shelby-protocol/sdk/node';
 import { stageOnce } from '../../src/adapters/shelby-storage-adapter.js';
 
 const sha256Hex = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
+
+describe('register_blob ABI-compat payload math', () => {
+  it('computes numChunksets and encoding consistent with the live testnet ABI', () => {
+    // Live ABI: (&signer, String, u64, vector<u8>, u32, u64, u8, u8).
+    // The compat payload is (blobName, expirationMicros, merkleRoot,
+    // numChunksets, size, encoding, tier). Verify the derived values are the
+    // right shapes for those arg slots.
+    const config = defaultErasureCodingConfig();
+    const chunksetBytes = config.chunkSizeBytes * config.erasure_k;
+    const numChunksets = expectedTotalChunksets(1024 * 1024, chunksetBytes);
+    expect(Number.isInteger(numChunksets)).toBe(true);
+    expect(numChunksets).toBeGreaterThanOrEqual(1);
+    expect(Number.isInteger(config.enumIndex)).toBe(true);
+    expect(config.enumIndex).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(config.erasure_d)).toBe(true);
+  });
+});
 
 /** Deterministic pseudo-random fixture bytes. */
 function fixtureBytes(count: number, seed = 3): Uint8Array {
