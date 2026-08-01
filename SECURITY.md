@@ -58,7 +58,8 @@ Required authorization tests:
 ## Replay, idempotency, and concurrency
 
 - `Idempotency-Key` is scoped to the authenticated caller and retained at least through the collection expiration.
-- Store a digest of normalized metadata and artifact hashes with the idempotency record.
+- Store a digest of normalized metadata and artifact descriptors (filename, media type, size,
+  and SHA-256) with the idempotency record.
 - Same key plus same digest returns the original response; same key plus different digest returns `409`.
 - Concurrent requests for the same key must have one winner through a unique database constraint or atomic claim.
 - Retries are bounded and limited to documented transient failures.

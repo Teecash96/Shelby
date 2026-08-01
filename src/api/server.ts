@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import multipart from '@fastify/multipart';
 import { authenticateCaller } from '../application/auth.js';
-import type { SealResult, SealRequest, SealMultipartPart } from '../application/seal-collection.js';
+import {
+  DEFAULT_SEAL_LIMITS,
+  type SealMultipartPart,
+  type SealRequest,
+  type SealResult,
+} from '../application/seal-collection.js';
 import { sealCollection } from '../application/seal-collection.js';
 import { verifyCollection } from '../application/verify-collection.js';
 import {
@@ -74,13 +79,22 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // the Fastify-level body limit must not truncate the multipart framing.
   // `logger: false` disables request logging entirely (structured logs come
   // from our own logger); no request-logging deprecation applies.
-  const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 });
+  const maxRequestBytes = deps.maxRequestBytes ?? DEFAULT_SEAL_LIMITS.maxRequestBytes;
+  // Leave room for multipart framing while keeping Fastify's parser bound
+  // aligned with the domain's aggregate upload limit.
+  const bodyLimit = Math.max(10 * 1024 * 1024, maxRequestBytes + 1024 * 1024);
+  const app = Fastify({ logger: false, bodyLimit });
 
   await app.register(multipart, { limits: { fileSize: deps.maxFileBytes ?? 26214400 } });
 
   const rateLimitWindow = deps.rateLimitWindowSeconds ?? 60;
   const sealLimiter = new InMemoryRateLimiter(deps.sealRateLimit ?? 60, rateLimitWindow);
   const retrievalLimiter = new InMemoryRateLimiter(deps.retrievalRateLimit ?? 120, rateLimitWindow);
+  const sealIpLimiter = new InMemoryRateLimiter(deps.sealRateLimit ?? 60, rateLimitWindow);
+  const retrievalIpLimiter = new InMemoryRateLimiter(
+    deps.retrievalRateLimit ?? 120,
+    rateLimitWindow,
+  );
 
   // Request ID on every response (API_CONTRACT.md general rules).
   app.addHook('onRequest', async (request, reply) => {
@@ -104,6 +118,23 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         error: { code: error.code, message: error.message, requestId, details: error.details },
       });
     }
+    const transportError = mapTransportError(error);
+    if (transportError !== undefined) {
+      deps.logger.warn('request rejected', {
+        requestId,
+        errorCode: transportError.code,
+        status: 'rejected',
+        operation: (request as { routeOptions?: { url?: string } }).routeOptions?.url,
+      });
+      return reply.status(statusForCode(transportError.code)).send({
+        error: {
+          code: transportError.code,
+          message: transportError.message,
+          requestId,
+          details: [],
+        },
+      });
+    }
     deps.logger.error('unhandled error', {
       requestId,
       errorCode: 'INTERNAL_ERROR',
@@ -118,12 +149,34 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Auth: every route under /api/v1 requires a valid bearer key.
   app.addHook('preHandler', async (request, reply) => {
     if (request.routeOptions.url?.startsWith('/health')) return;
+    const url = request.routeOptions.url ?? '';
+    const isSeal = url.includes('/seal');
+    const ipAllowed = isSeal
+      ? sealIpLimiter.allow(`ip:${request.ip}`)
+      : retrievalIpLimiter.allow(`ip:${request.ip}`);
+    if (!ipAllowed) {
+      deps.logger.warn('rate limited', {
+        requestId: request.headers['x-request-id'] as string | undefined,
+        errorCode: 'RATE_LIMITED',
+        status: 'rejected',
+        operation: url,
+      });
+      return reply
+        .header('Retry-After', String(rateLimitWindow))
+        .code(429)
+        .send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Too many requests. Try again later.',
+            requestId: request.headers['x-request-id'],
+            details: [],
+          },
+        });
+    }
     const caller = await authenticateCaller(deps.index, request.headers.authorization);
     (request as { caller?: unknown }).caller = caller;
 
-    // Rate limit after auth so budgets key by caller ID (SECURITY.md).
-    const url = request.routeOptions.url ?? '';
-    const isSeal = url.includes('/seal');
+    // Rate limit after auth as well, so budgets key by caller ID (SECURITY.md).
     const allowed = isSeal
       ? sealLimiter.allow(`caller:${caller.callerId}`)
       : retrievalLimiter.allow(`caller:${caller.callerId}`);
@@ -323,7 +376,7 @@ async function receiptForCollection(
   if (snapshot.collection.receiptJson === null) {
     throw new ProofVaultError('COLLECTION_NOT_FOUND', `No such collection: ${collectionId}`);
   }
-  if (Date.parse(snapshot.collection.expiresAt) <= Date.now()) {
+  if (Date.parse(snapshot.collection.expiresAt) <= (deps.now?.() ?? new Date()).getTime()) {
     throw new ProofVaultError('COLLECTION_EXPIRED', `Collection expired: ${collectionId}`);
   }
   return JSON.parse(snapshot.collection.receiptJson) as Receipt;
@@ -406,6 +459,38 @@ const STATUS_MAP: Record<string, number> = {
 
 function statusForCode(code: string): number {
   return STATUS_MAP[code] ?? 500;
+}
+
+/** Map Fastify/plugin parser failures to the public domain error envelope. */
+function mapTransportError(
+  error: unknown,
+): { code: keyof typeof STATUS_MAP; message: string } | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const candidate = error as { code?: unknown; statusCode?: unknown; status?: unknown };
+  const code = typeof candidate.code === 'string' ? candidate.code : undefined;
+  const status =
+    typeof candidate.statusCode === 'number'
+      ? candidate.statusCode
+      : typeof candidate.status === 'number'
+        ? candidate.status
+        : undefined;
+
+  if (code === 'FST_REQ_FILE_TOO_LARGE') {
+    return { code: 'FILE_TOO_LARGE', message: 'The uploaded file is too large.' };
+  }
+  if (code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
+    return { code: 'VALIDATION_ERROR', message: 'The request body must be valid JSON.' };
+  }
+  if (status === 413) {
+    return { code: 'REQUEST_TOO_LARGE', message: 'The request is too large.' };
+  }
+  if (status === 415) {
+    return { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'The request media type is not supported.' };
+  }
+  if (status !== undefined && status >= 400 && status < 500) {
+    return { code: 'VALIDATION_ERROR', message: 'The request could not be accepted.' };
+  }
+  return undefined;
 }
 
 export type { VerificationReport };

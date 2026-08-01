@@ -41,7 +41,7 @@ export interface CollectionRecord {
   manifestKey: string;
   /** Unique idempotency key scoped to the caller. */
   idempotencyKey: string;
-  /** SHA-256 of normalized request metadata + artifact hashes. */
+  /** SHA-256 of normalized request metadata + artifact descriptors. */
   requestDigest: string;
   /** Number of artifacts declared for the collection. */
   artifactCount: number;
@@ -140,6 +140,10 @@ export interface CollectionIndexPort {
     requestDigest: string;
   }): Promise<void>;
 
-  /** Delete an abandoned claim (partial-failure recovery). */
-  releaseIdempotencyClaim(callerId: string, idempotencyKey: string): Promise<void>;
+  /** Delete an abandoned claim only when the caller still owns it. */
+  releaseIdempotencyClaim(
+    callerId: string,
+    idempotencyKey: string,
+    collectionId: string,
+  ): Promise<void>;
 }

@@ -284,7 +284,11 @@ describe('SqliteCollectionIndex idempotency claims', () => {
       requestDigest: 'f'.repeat(64),
       collectionId: 'col_9999999999999999',
     });
-    await index.releaseIdempotencyClaim('caller_idem_1', 'idem-key-release-001');
+    await index.releaseIdempotencyClaim(
+      'caller_idem_1',
+      'idem-key-release-001',
+      'col_9999999999999999',
+    );
     const claim = await index.claimIdempotencyKey({
       callerId: 'caller_idem_1',
       idempotencyKey: 'idem-key-release-001',
@@ -292,6 +296,24 @@ describe('SqliteCollectionIndex idempotency claims', () => {
       collectionId: 'col_aaaaaaaaaaaaaaaa',
     });
     expect(claim?.collectionId).toBe('col_aaaaaaaaaaaaaaaa');
+  });
+
+  it('does not release a claim owned by a different collection', async () => {
+    const key = 'idem-key-owner-0001';
+    await index.claimIdempotencyKey({
+      callerId: 'caller_idem_1',
+      idempotencyKey: key,
+      requestDigest: '1'.repeat(64),
+      collectionId: 'col_owner_00000001',
+    });
+
+    await index.releaseIdempotencyClaim('caller_idem_1', key, 'col_loser_00000001');
+
+    expect(index.getIdempotencyRecord('caller_idem_1', key)?.collectionId).toBe(
+      'col_owner_00000001',
+    );
+    await index.releaseIdempotencyClaim('caller_idem_1', key, 'col_owner_00000001');
+    expect(index.getIdempotencyRecord('caller_idem_1', key)).toBeUndefined();
   });
 
   it('concurrent claims across connections have exactly one winner', async () => {

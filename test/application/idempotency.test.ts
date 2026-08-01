@@ -136,6 +136,26 @@ describe('computeRequestDigest', () => {
     });
     expect(a).not.toBe(b);
   });
+
+  it('differs when an artifact descriptor changes even when its bytes are identical', () => {
+    const a = computeRequestDigest({
+      name: 'X',
+      expiresAt: '2026-09-30T12:00:00.000Z',
+      metadata: {},
+      artifacts: [
+        { filename: 'first.txt', mediaType: 'text/plain', size: 1, sha256: 'a'.repeat(64) },
+      ],
+    });
+    const b = computeRequestDigest({
+      name: 'X',
+      expiresAt: '2026-09-30T12:00:00.000Z',
+      metadata: {},
+      artifacts: [
+        { filename: 'second.txt', mediaType: 'text/plain', size: 1, sha256: 'a'.repeat(64) },
+      ],
+    });
+    expect(a).not.toBe(b);
+  });
 });
 
 describe('claimIdempotency', () => {

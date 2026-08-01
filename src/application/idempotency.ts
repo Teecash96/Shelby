@@ -6,7 +6,7 @@ import type { CollectionIndexPort, IdempotencyRecord } from '../ports/collection
  * Idempotency service (SECURITY.md replay/idempotency/concurrency).
  *
  * - The idempotency key is scoped to the authenticated caller.
- * - A request digest is computed over normalized metadata + artifact hashes.
+ * - A request digest is computed over normalized metadata + artifact descriptors.
  * - Same key + same digest returns the original result (replay).
  * - Same key + different digest returns 409 IDEMPOTENCY_CONFLICT.
  * - A unique (caller_id, idempotency_key) constraint gives concurrent claims
@@ -36,22 +36,53 @@ export function validateIdempotencyKey(key: string): void {
 
 /**
  * Deterministic digest of a seal request: normalized metadata JSON + each
- * artifact's sha256 (sorted). This is what idempotent replay compares, not
- * the raw multipart bytes.
+ * artifact's descriptor (sorted). This is what idempotent replay compares, not
+ * the raw multipart bytes. File names and media types are included so an
+ * otherwise byte-identical request cannot replay a response for different
+ * user-visible metadata.
  */
+export interface RequestArtifactDigest {
+  filename: string;
+  mediaType: string;
+  size: number;
+  sha256: string;
+}
+
 export function computeRequestDigest(input: {
   name: string;
   expiresAt: string;
   metadata: Record<string, string>;
-  artifactSha256s: string[];
+  artifacts?: RequestArtifactDigest[];
+  /** Legacy compatibility for callers that only have hashes. */
+  artifactSha256s?: string[];
 }): string {
+  const artifacts =
+    input.artifacts ??
+    (input.artifactSha256s ?? []).map((sha256) => ({
+      filename: '',
+      mediaType: '',
+      size: 0,
+      sha256,
+    }));
+  const canonicalArtifacts = artifacts
+    .map((artifact) => ({
+      filename: artifact.filename,
+      mediaType: artifact.mediaType,
+      size: artifact.size,
+      sha256: artifact.sha256,
+    }))
+    .sort((a, b) => {
+      const left = JSON.stringify(a);
+      const right = JSON.stringify(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
   const canonical = JSON.stringify({
     name: input.name,
     expiresAt: input.expiresAt,
     metadata: Object.fromEntries(
       Object.entries(input.metadata).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     ),
-    artifactSha256s: [...input.artifactSha256s].sort(),
+    artifacts: canonicalArtifacts,
   });
   return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
@@ -296,5 +327,9 @@ export async function abortSeal(input: {
   collectionId: string;
 }): Promise<void> {
   await input.index.markFailed(input.collectionId);
-  await input.index.releaseIdempotencyClaim(input.callerId, input.idempotencyKey);
+  await input.index.releaseIdempotencyClaim(
+    input.callerId,
+    input.idempotencyKey,
+    input.collectionId,
+  );
 }

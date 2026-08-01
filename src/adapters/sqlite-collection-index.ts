@@ -367,10 +367,16 @@ export class SqliteCollectionIndex implements CollectionIndexPort {
       : { ...record, winningCollectionId: record.collectionId };
   }
 
-  async releaseIdempotencyClaim(callerId: string, idempotencyKey: string): Promise<void> {
+  async releaseIdempotencyClaim(
+    callerId: string,
+    idempotencyKey: string,
+    collectionId: string,
+  ): Promise<void> {
     this.db
-      .prepare('DELETE FROM idempotency WHERE caller_id = ? AND idempotency_key = ?')
-      .run(callerId, idempotencyKey);
+      .prepare(
+        'DELETE FROM idempotency WHERE caller_id = ? AND idempotency_key = ? AND collection_id = ?',
+      )
+      .run(callerId, idempotencyKey, collectionId);
   }
 
   async setIdempotencyDigest(input: {

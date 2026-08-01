@@ -172,6 +172,46 @@ describe('POST /api/v1/seal', () => {
     expect(body.error.code).toBe('IDEMPOTENCY_CONFLICT');
   });
 
+  it('treats a same-byte request with a different filename as a conflict', async () => {
+    const idem = 'api-seal-filename-conflict-001';
+    const expiresAt = new Date(Date.now() + 24 * 3600_000).toISOString();
+    const first = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': idem },
+      body: formData(
+        [
+          {
+            name: 'a.txt',
+            filename: 'first.txt',
+            contentType: 'text/plain',
+            content: ARTIFACT_ONE,
+          },
+        ],
+        { expiresAt },
+      ),
+    });
+    expect(first.status).toBe(201);
+
+    const conflict = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': idem },
+      body: formData(
+        [
+          {
+            name: 'a.txt',
+            filename: 'second.txt',
+            contentType: 'text/plain',
+            content: ARTIFACT_ONE,
+          },
+        ],
+        { expiresAt },
+      ),
+    });
+    expect(conflict.status).toBe(409);
+    const body = (await conflict.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+  });
+
   it('denies unauthenticated seal requests with 401', async () => {
     const res = await fetch(`${baseUrl()}/api/v1/seal`, {
       method: 'POST',
@@ -201,6 +241,20 @@ describe('POST /api/v1/seal', () => {
     expect(body.error.code).toBe('FORBIDDEN');
   });
 
+  it('rejects an expired collection when default limits are used', async () => {
+    const res = await fetch(`${baseUrl()}/api/v1/seal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Idempotency-Key': 'api-seal-expired-001' },
+      body: formData(
+        [{ name: 'a.txt', filename: 'a.txt', contentType: 'text/plain', content: ARTIFACT_ONE }],
+        { expiresAt: new Date(Date.now() - 60_000).toISOString() },
+      ),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('rejects oversized files with 413', async () => {
     const big = new Uint8Array(1024 * 1024).fill(90);
     const res = await fetch(`${baseUrl()}/api/v1/seal`, {
@@ -219,9 +273,65 @@ describe('POST /api/v1/seal', () => {
     // must succeed unless a smaller limit is configured.
     expect(res.status).toBe(201);
   });
+
+  it('maps a multipart file-size parser error to a stable 413 envelope', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'pv-small-limit-'));
+    const smallIndex = SqliteCollectionIndex.open(`file:${join(base, 'small.db')}`);
+    await smallIndex.upsertCaller({
+      callerId: 'caller_dev_local',
+      keyHash: hashApiKey(DEV_KEY),
+      label: 'small limit',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    const smallApp = await buildServer({
+      index: smallIndex,
+      storage: new LocalStorageAdapter(join(base, 'storage')),
+      logger: createLogger('error'),
+      maxFileBytes: 1,
+    });
+    await smallApp.listen({ port: 0, host: '127.0.0.1' });
+    const port = (smallApp.server.address() as { port: number }).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/v1/seal`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${DEV_KEY}`,
+          'Idempotency-Key': 'api-seal-parser-limit-001',
+        },
+        body: formData([
+          {
+            name: 'a.txt',
+            filename: 'a.txt',
+            contentType: 'text/plain',
+            content: new Uint8Array([1, 2]),
+          },
+        ]),
+      });
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('FILE_TOO_LARGE');
+      expect(body.error.message).toBe('The uploaded file is too large.');
+    } finally {
+      await smallApp.close();
+      smallIndex.close();
+    }
+  });
 });
 
 describe('POST /api/v1/verify', () => {
+  it('maps malformed JSON to a stable validation error', async () => {
+    const res = await fetch(`${baseUrl()}/api/v1/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEV_KEY}`, 'Content-Type': 'application/json' },
+      body: '{"receipt":',
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.message).toBe('The request body must be valid JSON.');
+  });
+
   it('verifies an unchanged collection', async () => {
     const sealRes = await fetch(`${baseUrl()}/api/v1/seal`, {
       method: 'POST',

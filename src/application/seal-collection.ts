@@ -11,6 +11,7 @@ import {
   computeRequestDigest,
   PROVISIONAL_DIGEST,
 } from './idempotency.js';
+import type { RequestArtifactDigest } from './idempotency.js';
 
 /**
  * Structural view of a multipart part. The seal service consumes the parts
@@ -66,6 +67,16 @@ export const DEFAULT_SEAL_LIMITS: SealLimits = {
 
 export const IDEMPOTENCY_KEY_PATTERN = /^[\x20-\x7E]{16,128}$/;
 
+function mergeSealLimits(overrides: Partial<SealLimits> | undefined): SealLimits {
+  const limits = { ...DEFAULT_SEAL_LIMITS };
+  if (overrides === undefined) return limits;
+  for (const key of Object.keys(DEFAULT_SEAL_LIMITS) as Array<keyof SealLimits>) {
+    const value = overrides[key];
+    if (value !== undefined) limits[key] = value;
+  }
+  return limits;
+}
+
 /** Media-type allowlist by top-level type (SECURITY.md: content-type is a claim). */
 const MEDIA_TYPE_ALLOWLIST = [
   'application',
@@ -91,7 +102,7 @@ interface PendingSeal {
   expiresAt: string;
   metadata: Record<string, string>;
   artifacts: ManifestArtifact[];
-  artifactHashes: string[];
+  artifactDigests: RequestArtifactDigest[];
   totalBytes: number;
 }
 
@@ -102,7 +113,7 @@ interface PendingSeal {
  * index state.
  */
 export async function sealCollection(request: SealRequest, deps: SealDeps): Promise<SealResult> {
-  const limits: SealLimits = { ...DEFAULT_SEAL_LIMITS, ...deps.limits };
+  const limits = mergeSealLimits(deps.limits);
   validateIdempotencyKey(request.idempotencyKey);
 
   const collectionId = `col_${randomUUID().replace(/-/g, '').slice(0, 24)}`;
@@ -137,7 +148,7 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
     expiresAt: '',
     metadata: {},
     artifacts: [],
-    artifactHashes: [],
+    artifactDigests: [],
     totalBytes: 0,
   };
   const seenFilenames = new Set<string>();
@@ -184,7 +195,7 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
           currentTotal: pending.totalBytes,
         });
         pending.totalBytes += size;
-        pending.artifactHashes.push(sha256);
+        pending.artifactDigests.push({ filename, mediaType, size, sha256 });
         pending.artifacts.push({
           artifactId,
           filename,
@@ -195,136 +206,138 @@ export async function sealCollection(request: SealRequest, deps: SealDeps): Prom
         });
       }
     }
+
+    validateComplete(pending, limits);
+
+    const manifest: Manifest = {
+      version: '1.0',
+      collectionId,
+      name: pending.name,
+      createdAt: (deps.now?.() ?? new Date()).toISOString(),
+      expiresAt: pending.expiresAt,
+      hashAlgorithm: 'sha256',
+      metadata: pending.metadata,
+      artifacts: pending.artifacts.slice().sort((a, b) => a.artifactId.localeCompare(b.artifactId)),
+    };
+    const manifestCanonical = canonicalManifestJson(manifest);
+    const manifestSha256 = createHash('sha256').update(manifestCanonical, 'utf8').digest('hex');
+
+    const manifestBytes = new TextEncoder().encode(manifestCanonical);
+    await deps.storage.put({
+      key: `collections/${collectionId}/manifest.json`,
+      body: (async function* () {
+        yield manifestBytes;
+      })(),
+      contentType: 'application/json',
+      expiresAt: pending.expiresAt,
+      idempotencyKey: request.idempotencyKey,
+    });
+
+    const requestDigest = computeRequestDigest({
+      name: pending.name,
+      expiresAt: pending.expiresAt,
+      metadata: pending.metadata,
+      artifacts: pending.artifactDigests,
+    });
+
+    // A sealed collection may have appeared while streaming (a concurrent seal
+    // with the same key). Compare digests: identical -> replay, different -> 409.
+    const sealedDuringStream = await deps.index.findSealedByIdempotencyKey(
+      request.callerId,
+      request.idempotencyKey,
+    );
+    if (sealedDuringStream !== undefined) {
+      if (sealedDuringStream.collection.requestDigest === requestDigest) {
+        return replayResult(sealedDuringStream);
+      }
+      throw new ProofVaultError(
+        'IDEMPOTENCY_CONFLICT',
+        'Idempotency-Key was already used with a different request.',
+      );
+    }
+
+    // Only the atomic claim winner may persist the collection. A loser that
+    // reached this point raced the winner's commit; wait briefly for the winner
+    // to seal (replay) or report a conflict. Without this gate, two same-key
+    // requests both reach beginSeal and the UNIQUE(caller_id, idempotency_key)
+    // constraint turns into a 500.
+    if (!iWonClaim) {
+      const winnerSealed = await waitForWinnerSeal(deps, request, requestDigest);
+      if (winnerSealed !== undefined) return winnerSealed;
+      throw new ProofVaultError(
+        'IDEMPOTENCY_CONFLICT',
+        'Idempotency-Key was already used with a different request.',
+      );
+    }
+
+    await deps.index.setIdempotencyDigest({
+      callerId: request.callerId,
+      idempotencyKey: request.idempotencyKey,
+      requestDigest,
+    });
+
+    const collection: CollectionRecord = {
+      collectionId,
+      callerId: request.callerId,
+      name: pending.name,
+      status: 'receiving',
+      createdAt: manifest.createdAt,
+      expiresAt: pending.expiresAt,
+      manifestSha256,
+      manifestKey: `collections/${collectionId}/manifest.json`,
+      idempotencyKey: request.idempotencyKey,
+      requestDigest,
+      artifactCount: pending.artifacts.length,
+      receiptJson: null,
+    };
+
+    const receipt: Receipt = {
+      version: '1.0',
+      collectionId,
+      manifestKey: `collections/${collectionId}/manifest.json`,
+      manifestSha256,
+      expiresAt: pending.expiresAt,
+    };
+
+    await deps.index.beginSeal({
+      collection,
+      artifacts: pending.artifacts.map((a) => ({
+        artifactId: a.artifactId,
+        collectionId,
+        filename: a.filename,
+        mediaType: a.mediaType,
+        size: a.size,
+        sha256: a.sha256,
+        storageKey: a.storageKey,
+        providerRef: null,
+        sha256Hex: a.sha256,
+      })),
+    });
+    await commitSeal({ index: deps.index, collectionId, receiptJson: JSON.stringify(receipt) });
+
+    return {
+      collectionId,
+      status: 'sealed',
+      replayed: false,
+      receipt,
+      artifacts: pending.artifacts.map((a) => ({
+        artifactId: a.artifactId,
+        filename: a.filename,
+        size: a.size,
+        mediaType: a.mediaType,
+        sha256: a.sha256,
+      })),
+    };
   } catch (error) {
-    // Partial uploads stay quarantined and are never returned as sealed.
+    // Any failure after claiming the key leaves the collection unsealed. Mark
+    // it failed and release only this request's claim; a concurrent loser must
+    // never be able to delete the winner's claim.
     await deps.index.markFailed(collectionId).catch(() => undefined);
     await deps.index
-      .releaseIdempotencyClaim(request.callerId, request.idempotencyKey)
+      .releaseIdempotencyClaim(request.callerId, request.idempotencyKey, collectionId)
       .catch(() => undefined);
     throw error;
   }
-
-  validateComplete(pending, limits);
-
-  const manifest: Manifest = {
-    version: '1.0',
-    collectionId,
-    name: pending.name,
-    createdAt: (deps.now?.() ?? new Date()).toISOString(),
-    expiresAt: pending.expiresAt,
-    hashAlgorithm: 'sha256',
-    metadata: pending.metadata,
-    artifacts: pending.artifacts.slice().sort((a, b) => a.artifactId.localeCompare(b.artifactId)),
-  };
-  const manifestCanonical = canonicalManifestJson(manifest);
-  const manifestSha256 = createHash('sha256').update(manifestCanonical, 'utf8').digest('hex');
-
-  const manifestBytes = new TextEncoder().encode(manifestCanonical);
-  await deps.storage.put({
-    key: `collections/${collectionId}/manifest.json`,
-    body: (async function* () {
-      yield manifestBytes;
-    })(),
-    contentType: 'application/json',
-    expiresAt: pending.expiresAt,
-    idempotencyKey: request.idempotencyKey,
-  });
-
-  const requestDigest = computeRequestDigest({
-    name: pending.name,
-    expiresAt: pending.expiresAt,
-    metadata: pending.metadata,
-    artifactSha256s: pending.artifactHashes,
-  });
-
-  // A sealed collection may have appeared while streaming (a concurrent seal
-  // with the same key). Compare digests: identical -> replay, different -> 409.
-  const sealedDuringStream = await deps.index.findSealedByIdempotencyKey(
-    request.callerId,
-    request.idempotencyKey,
-  );
-  if (sealedDuringStream !== undefined) {
-    if (sealedDuringStream.collection.requestDigest === requestDigest) {
-      return replayResult(sealedDuringStream);
-    }
-    throw new ProofVaultError(
-      'IDEMPOTENCY_CONFLICT',
-      'Idempotency-Key was already used with a different request.',
-    );
-  }
-
-  // Only the atomic claim winner may persist the collection. A loser that
-  // reached this point raced the winner's commit; wait briefly for the winner
-  // to seal (replay) or report a conflict. Without this gate, two same-key
-  // requests both reach beginSeal and the UNIQUE(caller_id, idempotency_key)
-  // constraint turns into a 500.
-  if (!iWonClaim) {
-    const winnerSealed = await waitForWinnerSeal(deps, request, requestDigest);
-    if (winnerSealed !== undefined) return winnerSealed;
-    throw new ProofVaultError(
-      'IDEMPOTENCY_CONFLICT',
-      'Idempotency-Key was already used with a different request.',
-    );
-  }
-
-  await deps.index.setIdempotencyDigest({
-    callerId: request.callerId,
-    idempotencyKey: request.idempotencyKey,
-    requestDigest,
-  });
-
-  const collection: CollectionRecord = {
-    collectionId,
-    callerId: request.callerId,
-    name: pending.name,
-    status: 'receiving',
-    createdAt: manifest.createdAt,
-    expiresAt: pending.expiresAt,
-    manifestSha256,
-    manifestKey: `collections/${collectionId}/manifest.json`,
-    idempotencyKey: request.idempotencyKey,
-    requestDigest,
-    artifactCount: pending.artifacts.length,
-    receiptJson: null,
-  };
-
-  const receipt: Receipt = {
-    version: '1.0',
-    collectionId,
-    manifestKey: `collections/${collectionId}/manifest.json`,
-    manifestSha256,
-    expiresAt: pending.expiresAt,
-  };
-
-  await deps.index.beginSeal({
-    collection,
-    artifacts: pending.artifacts.map((a) => ({
-      artifactId: a.artifactId,
-      collectionId,
-      filename: a.filename,
-      mediaType: a.mediaType,
-      size: a.size,
-      sha256: a.sha256,
-      storageKey: a.storageKey,
-      providerRef: null,
-      sha256Hex: a.sha256,
-    })),
-  });
-  await commitSeal({ index: deps.index, collectionId, receiptJson: JSON.stringify(receipt) });
-
-  return {
-    collectionId,
-    status: 'sealed',
-    replayed: false,
-    receipt,
-    artifacts: pending.artifacts.map((a) => ({
-      artifactId: a.artifactId,
-      filename: a.filename,
-      size: a.size,
-      mediaType: a.mediaType,
-      sha256: a.sha256,
-    })),
-  };
 }
 
 /**
