@@ -56,7 +56,12 @@ export class LocalStorageAdapter implements StoragePort {
 
   async put(input: StoragePutInput): Promise<StoragePutResult> {
     this.assertKey(input.key);
-    await mkdir(join(this.dataDir, dirname(input.key)), { recursive: true });
+    // Stored bytes are potentially sensitive (SECURITY.md): create the data
+    // directory with owner-only permissions. Existing dirs are left as-is.
+    await mkdir(join(this.dataDir, dirname(input.key)), {
+      recursive: true,
+      mode: 0o700,
+    });
 
     // Each writer owns its temporary pathname; a shared path lets concurrent
     // puts unlink or rename one another's active inode.
@@ -187,7 +192,8 @@ async function openTempWriteStream(
   tempPath: string,
 ): Promise<ReturnType<typeof createWriteStream>> {
   return new Promise<ReturnType<typeof createWriteStream>>((resolve, reject) => {
-    const stream = createWriteStream(tempPath, { flags: 'wx' });
+    // Owner-only temp files: partial upload bytes are potentially sensitive.
+    const stream = createWriteStream(tempPath, { flags: 'wx', mode: 0o600 });
     stream.once('error', (error) => reject(error));
     stream.once('open', () => resolve(stream));
   });

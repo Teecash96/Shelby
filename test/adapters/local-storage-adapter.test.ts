@@ -121,6 +121,35 @@ describe('LocalStorageAdapter interrupted writes', () => {
   });
 });
 
+describe('LocalStorageAdapter permissions', () => {
+  it('creates the data directory and stored files owner-only', async () => {
+    const { dir, cleanup } = await (async () => {
+      const d = await mkdtemp(join(tmpdir(), 'pv-perms-'));
+      return { dir: join(d, 'data'), cleanup: () => rm(d, { recursive: true, force: true }) };
+    })();
+    try {
+      const adapter = new LocalStorageAdapter(dir);
+      const fixture = new TextEncoder().encode('sensitive bytes');
+      await adapter.put({
+        key: 'collections/c/x',
+        body: (async function* () {
+          yield fixture;
+        })(),
+        contentType: 'text/plain',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+        idempotencyKey: 'idem-perms',
+      });
+      const { stat } = await import('node:fs/promises');
+      const dirMode = (await stat(dir)).mode & 0o777;
+      const fileMode = (await stat(join(dir, 'collections', 'c', 'x'))).mode & 0o777;
+      expect(dirMode & 0o077).toBe(0); // no group/other bits
+      expect(fileMode & 0o077).toBe(0); // owner-only file
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe('LocalStorageAdapter traversal and symlink defense', () => {
   // These tests create symlinks pointing outside the adapter root, so they
   // use dedicated mkdtemp directories instead of the shared test root.

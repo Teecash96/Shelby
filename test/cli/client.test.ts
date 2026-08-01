@@ -64,7 +64,11 @@ function collectionJson(name = 'cli collection'): string {
 describe('ProofVaultClient seal', () => {
   it('seals one artifact with a schema-valid receipt and exact hash', async () => {
     const filePath = writeFixture('one.txt', artifactBytes);
-    const { status, body } = await client.seal(collectionJson(), [{ path: filePath }], 'cli-test-seal-000001');
+    const { status, body } = await client.seal(
+      collectionJson(),
+      [{ path: filePath }],
+      'cli-test-seal-000001',
+    );
     expect(status).toBe(201);
     expect(body.collectionId).toMatch(/^col_/);
     expect(body.receipt.version).toBe('1.0');
@@ -76,7 +80,11 @@ describe('ProofVaultClient seal', () => {
   it('seals multiple artifacts in one request', async () => {
     const a = writeFixture('multi-a.txt', new TextEncoder().encode('aaa'));
     const b = writeFixture('multi-b.txt', new TextEncoder().encode('bbbbbb'));
-    const { body } = await client.seal(collectionJson('multi'), [{ path: a }, { path: b }], 'cli-test-seal-000002');
+    const { body } = await client.seal(
+      collectionJson('multi'),
+      [{ path: a }, { path: b }],
+      'cli-test-seal-000002',
+    );
     expect(body.artifacts).toHaveLength(2);
   });
 
@@ -108,16 +116,20 @@ describe('ProofVaultClient seal', () => {
   it('throws ApiError 401 without a valid key', async () => {
     const bad = new ProofVaultClient({ baseUrl: clientBaseUrl(), apiKey: 'nope' });
     const filePath = writeFixture('unauth.txt', artifactBytes);
-    await expect(bad.seal(collectionJson(), [{ path: filePath }], 'cli-test-seal-000005')).rejects.toBeInstanceOf(
-      ApiError,
-    );
+    await expect(
+      bad.seal(collectionJson(), [{ path: filePath }], 'cli-test-seal-000005'),
+    ).rejects.toBeInstanceOf(ApiError);
   });
 });
 
 describe('ProofVaultClient verify and recover', () => {
   it('verifies a sealed collection', async () => {
     const filePath = writeFixture('verify.txt', artifactBytes);
-    const { body: sealed } = await client.seal(collectionJson(), [{ path: filePath }], 'cli-test-verify-0001');
+    const { body: sealed } = await client.seal(
+      collectionJson(),
+      [{ path: filePath }],
+      'cli-test-verify-0001',
+    );
     const { body } = await client.verify(sealed.receipt);
     expect(body.result).toBe('verified');
     expect(body.summary).toEqual({ total: 1, verified: 1, missing: 0, invalid: 0 });
@@ -125,7 +137,11 @@ describe('ProofVaultClient verify and recover', () => {
 
   it('recovers an artifact to disk with the exact bytes', async () => {
     const filePath = writeFixture('recover.txt', artifactBytes);
-    const { body: sealed } = await client.seal(collectionJson(), [{ path: filePath }], 'cli-test-recover-0001');
+    const { body: sealed } = await client.seal(
+      collectionJson(),
+      [{ path: filePath }],
+      'cli-test-recover-0001',
+    );
     const artifact = sealed.artifacts[0]!;
     const outPath = join(baseDir, 'recovered.bin');
     await client.recoverArtifact(sealed.collectionId, artifact.artifactId, outPath);
@@ -135,7 +151,11 @@ describe('ProofVaultClient verify and recover', () => {
 
   it('recovers a ZIP evidence package', async () => {
     const filePath = writeFixture('package.txt', artifactBytes);
-    const { body: sealed } = await client.seal(collectionJson(), [{ path: filePath }], 'cli-test-package-0001');
+    const { body: sealed } = await client.seal(
+      collectionJson(),
+      [{ path: filePath }],
+      'cli-test-package-0001',
+    );
     const outPath = join(baseDir, 'evidence.zip');
     await client.recoverPackage(sealed.collectionId, outPath);
     const bytes = readFileSync(outPath);
@@ -144,7 +164,9 @@ describe('ProofVaultClient verify and recover', () => {
   });
 
   it('throws ApiError 404 for an unknown collection', async () => {
-    await expect(client.recoverPackage('col_0000000000000000', join(baseDir, 'x.zip'))).rejects.toMatchObject({
+    await expect(
+      client.recoverPackage('col_0000000000000000', join(baseDir, 'x.zip')),
+    ).rejects.toMatchObject({
       code: 'COLLECTION_NOT_FOUND',
       status: 404,
     });

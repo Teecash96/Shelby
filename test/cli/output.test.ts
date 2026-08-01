@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { emitSuccess, emitFailure, failureFrom, EXIT_OK, EXIT_DOMAIN } from '../../src/cli/output.js';
+import {
+  emitSuccess,
+  emitFailure,
+  failureFrom,
+  EXIT_OK,
+  EXIT_DOMAIN,
+} from '../../src/cli/output.js';
 
 /** Capture stdout/stderr writes. */
 function capture(fn: () => number): { code: number; out: string; err: string } {
@@ -27,7 +33,9 @@ function capture(fn: () => number): { code: number; out: string; err: string } {
 describe('CLI output', () => {
   it('emits JSON on stdout with --json and exit 0', () => {
     const { code, out } = capture(() =>
-      emitSuccess({ ok: true, data: { receipt: { version: '1.0' } } }, true, (d) => String(d.receipt.version)),
+      emitSuccess({ ok: true, data: { receipt: { version: '1.0' } } }, true, (d) =>
+        String(d.receipt.version),
+      ),
     );
     expect(code).toBe(EXIT_OK);
     const parsed = JSON.parse(out) as { ok: boolean; data: { receipt: { version: string } } };
@@ -37,7 +45,11 @@ describe('CLI output', () => {
 
   it('emits human text without --json', () => {
     const { code, out } = capture(() =>
-      emitSuccess({ ok: true, data: { receipt: { version: '1.0' } } }, false, (d) => `version ${d.receipt.version}`),
+      emitSuccess(
+        { ok: true, data: { receipt: { version: '1.0' } } },
+        false,
+        (d) => `version ${d.receipt.version}`,
+      ),
     );
     expect(code).toBe(EXIT_OK);
     expect(out).toBe('version 1.0\n');
@@ -53,7 +65,12 @@ describe('CLI output', () => {
   });
 
   it('builds a failure from an ApiError-like object preserving code/requestId', () => {
-    const failure = failureFrom({ name: 'ApiError', code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', requestId: 'req_1' });
+    const failure = failureFrom({
+      name: 'ApiError',
+      code: 'IDEMPOTENCY_CONFLICT',
+      message: 'conflict',
+      requestId: 'req_1',
+    });
     expect(failure).toEqual({
       ok: false,
       error: { code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', requestId: 'req_1' },

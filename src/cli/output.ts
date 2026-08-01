@@ -26,7 +26,11 @@ export const EXIT_DOMAIN = 1;
 export const EXIT_TRANSPORT = 2;
 
 /** Print a success result and return its exit code. */
-export function emitSuccess<T>(result: CliSuccess<T>, json: boolean, human: (data: T) => string): number {
+export function emitSuccess<T>(
+  result: CliSuccess<T>,
+  json: boolean,
+  human: (data: T) => string,
+): number {
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {

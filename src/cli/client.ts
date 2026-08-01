@@ -65,7 +65,12 @@ export interface VerifyResponse {
   result: 'verified' | 'incomplete' | 'invalid' | 'expired';
   verifiedAt: string;
   manifest: { matched: boolean; actualSha256?: string };
-  artifacts: Array<{ artifactId: string; result: string; expectedSha256: string; actualSha256?: string }>;
+  artifacts: Array<{
+    artifactId: string;
+    result: string;
+    expectedSha256: string;
+    actualSha256?: string;
+  }>;
   summary: { total: number; verified: number; missing: number; invalid: number };
 }
 
@@ -97,7 +102,9 @@ export class ProofVaultClient {
     const encoder = new TextEncoder();
 
     const header = (name: string, value: string): Uint8Array =>
-      encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+      encoder.encode(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+      );
     const fileHeader = (filename: string, mediaType: string): Uint8Array =>
       encoder.encode(
         `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${filename}"\r\nContent-Type: ${mediaType}\r\n\r\n`,

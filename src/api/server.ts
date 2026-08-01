@@ -501,9 +501,7 @@ export type { VerificationReport };
  * Fastify `reply.send`. Fastify stringifies web ReadableStreams it cannot
  * identify, which silently corrupts artifact/package downloads.
  */
-function toNodeReadable(
-  body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
-): Readable {
+function toNodeReadable(body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>): Readable {
   if (Symbol.asyncIterator in Object(body)) {
     return Readable.from(body as AsyncIterable<Uint8Array>);
   }

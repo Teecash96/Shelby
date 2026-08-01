@@ -72,17 +72,16 @@ function clientFor(): ProofVaultClient {
 /** A generated idempotency key from a content digest + timestamp. */
 function generatedIdempotencyKey(files: string[]): string {
   const stamp = Date.now().toString(36);
-  const digest = createHash('sha256')
-    .update(files.join('\u0000'))
-    .digest('hex')
-    .slice(0, 16);
+  const digest = createHash('sha256').update(files.join('\u0000')).digest('hex').slice(0, 16);
   return `cli_${stamp}_${digest}`.slice(0, 128);
 }
 
 async function cmdSeal(argv: string[]): Promise<number> {
   const args = parseArgs(argv, '');
   if (args.positionals.length < 2) {
-    process.stderr.write('usage: proofvault seal <collection.json> <file...> [--idempotency-key KEY] [--json]\n');
+    process.stderr.write(
+      'usage: proofvault seal <collection.json> <file...> [--idempotency-key KEY] [--json]\n',
+    );
     return EXIT_TRANSPORT;
   }
   const collectionJson = readFileSync(args.positionals[0]!, 'utf8');
@@ -90,10 +89,18 @@ async function cmdSeal(argv: string[]): Promise<number> {
   const idem = args.idempotencyKey ?? generatedIdempotencyKey(args.positionals.slice(1));
   try {
     const { status, body } = await clientFor().seal(collectionJson, files, idem);
-    const data = { status, replayed: body.replayed, collectionId: body.collectionId, receipt: body.receipt, artifacts: body.artifacts };
+    const data = {
+      status,
+      replayed: body.replayed,
+      collectionId: body.collectionId,
+      receipt: body.receipt,
+      artifacts: body.artifacts,
+    };
     return emitSuccess({ ok: true, data } satisfies CliSuccess<typeof data>, args.json, (d) => {
       const lines = [
-        d.replayed ? `replayed (200): ${d.collectionId}` : `sealed (${d.status}): ${d.collectionId}`,
+        d.replayed
+          ? `replayed (200): ${d.collectionId}`
+          : `sealed (${d.status}): ${d.collectionId}`,
         `receipt: ${JSON.stringify(d.receipt)}`,
         `artifacts: ${d.artifacts.length}`,
       ];
@@ -113,7 +120,13 @@ async function cmdVerify(argv: string[]): Promise<number> {
   const receipt = JSON.parse(readFileSync(args.positionals[0]!, 'utf8')) as unknown;
   try {
     const { status, body } = await clientFor().verify(receipt);
-    const data = { status, result: body.result, summary: body.summary, artifacts: body.artifacts, verifiedAt: body.verifiedAt };
+    const data = {
+      status,
+      result: body.result,
+      summary: body.summary,
+      artifacts: body.artifacts,
+      verifiedAt: body.verifiedAt,
+    };
     const ok = emitSuccess({ ok: true, data } satisfies CliSuccess<typeof data>, args.json, (d) => {
       return `verify (${d.status}): ${d.result} — ${d.summary.verified}/${d.summary.total} verified, ${d.summary.missing} missing, ${d.summary.invalid} invalid`;
     });
@@ -127,13 +140,23 @@ async function cmdVerify(argv: string[]): Promise<number> {
 async function cmdRecoverArtifact(argv: string[]): Promise<number> {
   const args = parseArgs(argv, '-o');
   if (args.positionals.length < 2 || args.outPath === undefined) {
-    process.stderr.write('usage: proofvault recover-artifact <collectionId> <artifactId> -o <out> [--json]\n');
+    process.stderr.write(
+      'usage: proofvault recover-artifact <collectionId> <artifactId> -o <out> [--json]\n',
+    );
     return EXIT_TRANSPORT;
   }
   try {
     await clientFor().recoverArtifact(args.positionals[0]!, args.positionals[1]!, args.outPath);
-    const data = { collectionId: args.positionals[0]!, artifactId: args.positionals[1]!, out: args.outPath };
-    return emitSuccess({ ok: true, data } satisfies CliSuccess<typeof data>, args.json, (d) => `artifact ${d.artifactId} written to ${d.out}`);
+    const data = {
+      collectionId: args.positionals[0]!,
+      artifactId: args.positionals[1]!,
+      out: args.outPath,
+    };
+    return emitSuccess(
+      { ok: true, data } satisfies CliSuccess<typeof data>,
+      args.json,
+      (d) => `artifact ${d.artifactId} written to ${d.out}`,
+    );
   } catch (error) {
     return emitFailure(failureFrom(error), args.json);
   }
@@ -142,13 +165,19 @@ async function cmdRecoverArtifact(argv: string[]): Promise<number> {
 async function cmdRecoverPackage(argv: string[]): Promise<number> {
   const args = parseArgs(argv, '-o');
   if (args.positionals.length < 1 || args.outPath === undefined) {
-    process.stderr.write('usage: proofvault recover-package <collectionId> -o <out.zip> [--json]\n');
+    process.stderr.write(
+      'usage: proofvault recover-package <collectionId> -o <out.zip> [--json]\n',
+    );
     return EXIT_TRANSPORT;
   }
   try {
     await clientFor().recoverPackage(args.positionals[0]!, args.outPath);
     const data = { collectionId: args.positionals[0]!, out: args.outPath };
-    return emitSuccess({ ok: true, data } satisfies CliSuccess<typeof data>, args.json, (d) => `evidence package written to ${d.out}`);
+    return emitSuccess(
+      { ok: true, data } satisfies CliSuccess<typeof data>,
+      args.json,
+      (d) => `evidence package written to ${d.out}`,
+    );
   } catch (error) {
     return emitFailure(failureFrom(error), args.json);
   }

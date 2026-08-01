@@ -317,6 +317,58 @@ describe('POST /api/v1/seal', () => {
       smallIndex.close();
     }
   });
+
+  it('enforces the total request byte limit across multiple files (REQUEST_TOO_LARGE)', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'pv-total-limit-'));
+    const totalIndex = SqliteCollectionIndex.open(`file:${join(base, 'total.db')}`);
+    await totalIndex.upsertCaller({
+      callerId: 'caller_dev_local',
+      keyHash: hashApiKey(DEV_KEY),
+      label: 'total limit',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    const totalApp = await buildServer({
+      index: totalIndex,
+      storage: new LocalStorageAdapter(join(base, 'storage')),
+      logger: createLogger('error'),
+      maxFileBytes: 1024,
+      maxRequestBytes: 100,
+    });
+    await totalApp.listen({ port: 0, host: '127.0.0.1' });
+    const port = (totalApp.server.address() as { port: number }).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/v1/seal`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${DEV_KEY}`,
+          'Idempotency-Key': 'api-seal-total-limit-001',
+        },
+        body: formData([
+          {
+            name: 'a.txt',
+            filename: 'a.txt',
+            contentType: 'text/plain',
+            content: new Uint8Array(60).fill(65),
+          },
+          {
+            name: 'b.txt',
+            filename: 'b.txt',
+            contentType: 'text/plain',
+            content: new Uint8Array(60).fill(66),
+          },
+        ]),
+      });
+      // Each file is under maxFileBytes (1024) but together exceed
+      // maxRequestBytes (100): the total limit must win.
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('REQUEST_TOO_LARGE');
+    } finally {
+      await totalApp.close();
+      totalIndex.close();
+    }
+  });
 });
 
 describe('POST /api/v1/verify', () => {
