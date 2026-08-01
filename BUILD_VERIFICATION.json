@@ -92,6 +92,13 @@
       "definition": "package.json scripts.start (dist/src/index.js)",
       "verified": true,
       "whatItProves": "Boots the ProofVault API with the local driver; fail-closed on STORAGE_DRIVER=shelby with a precise list of missing environment variables."
+    },
+    {
+      "name": "cli",
+      "command": "pnpm cli",
+      "definition": "package.json scripts.cli (src/cli/index.ts)",
+      "verified": true,
+      "whatItProves": "Thin agent-facing CLI over the local API: seal (streaming multipart, idempotent replay/conflict), verify, recover-artifact, recover-package; machine-readable --json output and documented exit codes."
     }
   ]
 }
