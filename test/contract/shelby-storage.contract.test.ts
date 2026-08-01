@@ -13,6 +13,12 @@ import {
  */
 export const shelbyAdapterHarness: AdapterHarness = {
   name: 'shelby',
+  // Shelby is a shared network namespace: unique per-run keys avoid
+  // AlreadyExists collisions with blobs committed by earlier runs.
+  keyPrefix: 'pv-contract',
+  // Each put is a multi-step on-chain flow (register, chunksets, commit,
+  // confirm); give the network suite room to complete.
+  timeoutMs: 60000,
   makeAdapter: (_dataDir) => {
     const config = shelbyConfigFromEnv();
     if (config === undefined) {

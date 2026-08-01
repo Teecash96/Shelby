@@ -86,8 +86,11 @@ export class ShelbyStorageAdapter implements StoragePort {
   readonly coordination: ShelbyBlobClient;
   readonly account: Account;
   readonly accountAddressHex: string;
+  /** Valid on-chain location name (e.g. 'shelbynet-1'), when configured. */
+  private readonly locationHint?: string;
 
   constructor(config: ShelbyAdapterConfig) {
+    this.locationHint = config.locationHint;
     this.account = Account.fromPrivateKey({
       privateKey: new Ed25519PrivateKey(parsePrivateKeyHex(config.accountPrivateKey)),
     });
@@ -123,6 +126,14 @@ export class ShelbyStorageAdapter implements StoragePort {
     const tempFile = join(tempDir, `${randomUUID()}.blob`);
     const staged = await stageOnce(input.body, tempFile, provider);
     const { commitments, size } = staged;
+
+    // Content-addressed store: a blob already committed under this key is the
+    // same artifact. Idempotent no-op (the network rejects re-commits with
+    // AlreadyExists, which the local adapter treats as first-write-wins).
+    if (await this.exists(blobName)) {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+      return { key: input.key, size, providerRef: `${this.accountAddressHex}:${blobName}` };
+    }
 
     try {
       // Shelby expiry in microseconds since epoch. bigint avoids precision
@@ -271,6 +282,8 @@ export class ShelbyStorageAdapter implements StoragePort {
         blobMerkleRoot,
         size,
         expirationMicros: expirationMicros as unknown as number,
+        options:
+          this.locationHint === undefined ? undefined : { selectedLocation: this.locationHint },
       });
       return transaction;
     } catch (error) {
