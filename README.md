@@ -16,6 +16,11 @@ The production dashboard is intentionally deferred until the upload-to-receipt
 flow has a reviewed prototype. An agent-facing CLI (`pnpm cli`) covers the
 local workflow today.
 
+The read-only dashboard flow prototype is available at
+[docs/prototypes/proofvault-dashboard.html](docs/prototypes/proofvault-dashboard.html).
+It uses deterministic local mocks only; approve the flow before any production
+dashboard implementation begins.
+
 ## Run locally
 
 ```sh

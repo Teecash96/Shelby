@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ProofVault read-only dashboard flow prototype" />
+    <title>ProofVault — flow prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #edf4f2;
+        --muted: #9cafab;
+        --quiet: #6e817e;
+        --canvas: #091513;
+        --panel: #10221f;
+        --panel-2: #142925;
+        --line: rgba(205, 236, 224, 0.15);
+        --line-strong: rgba(205, 236, 224, 0.28);
+        --mint: #9ce5c4;
+        --mint-strong: #51c995;
+        --amber: #f2c979;
+        --rose: #f39b9b;
+        --sky: #94c9e8;
+        --shadow: 0 22px 55px rgba(0, 0, 0, 0.25);
+        --radius: 18px;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html { min-width: 320px; background: var(--canvas); }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 80% 8%, rgba(81, 201, 149, 0.12), transparent 28rem),
+          linear-gradient(160deg, #091513 0%, #0a1715 54%, #0b1213 100%);
+        font-family: var(--sans);
+        letter-spacing: 0.01em;
+      }
+
+      button, input, textarea, select { font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+        outline: 3px solid rgba(156, 229, 196, 0.72);
+        outline-offset: 3px;
+      }
+      .prototype-banner {
+        display: flex;
+        justify-content: center;
+        gap: 0.7rem;
+        padding: 0.55rem 1rem;
+        color: #d9f7e9;
+        background: #173b31;
+        border-bottom: 1px solid rgba(156, 229, 196, 0.32);
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .prototype-banner strong { color: var(--mint); }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 252px minmax(0, 1fr);
+        min-height: calc(100vh - 34px);
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+        padding: 2rem 1.35rem 1.2rem;
+        border-right: 1px solid var(--line);
+        background: rgba(7, 19, 17, 0.76);
+      }
+      .brand { display: flex; align-items: center; gap: 0.8rem; }
+      .brand-mark {
+        display: grid;
+        width: 2.35rem;
+        height: 2.35rem;
+        place-items: center;
+        color: #092017;
+        background: var(--mint);
+        border-radius: 0.8rem 0.8rem 0.8rem 0.2rem;
+        font-weight: 900;
+      }
+      .brand-name { font-weight: 800; letter-spacing: 0.04em; }
+      .brand-subtitle { margin-top: 0.15rem; color: var(--quiet); font-size: 0.7rem; }
+      .nav-label, .eyebrow {
+        color: var(--quiet);
+        font-size: 0.68rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .nav { display: grid; gap: 0.4rem; }
+      .nav button {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        width: 100%;
+        padding: 0.78rem 0.85rem;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 0.75rem;
+        text-align: left;
+      }
+      .nav button:hover, .nav button[aria-current="page"] {
+        color: var(--ink);
+        background: rgba(156, 229, 196, 0.08);
+        border-color: rgba(156, 229, 196, 0.17);
+      }
+      .nav-icon { width: 1.1rem; color: var(--mint); text-align: center; }
+      .sidebar-note {
+        margin-top: auto;
+        padding: 1rem;
+        color: var(--muted);
+        background: rgba(255,255,255,0.035);
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        font-size: 0.78rem;
+        line-height: 1.5;
+      }
+      .sidebar-note strong { display: block; margin-bottom: 0.35rem; color: var(--mint); }
+
+      .main { min-width: 0; padding: 2rem clamp(1rem, 4vw, 4.4rem) 4rem; }
+      .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; max-width: 1100px; margin: 0 auto 2.3rem; }
+      .topbar h1 { max-width: 39rem; margin: 0.4rem 0 0; font-size: clamp(1.9rem, 4vw, 3.25rem); line-height: 1.02; letter-spacing: -0.045em; }
+      .topbar p { max-width: 38rem; margin: 0.9rem 0 0; color: var(--muted); line-height: 1.65; }
+      .role-switcher { display: flex; align-items: center; gap: 0.55rem; color: var(--muted); font-size: 0.8rem; }
+      .role-switcher select { padding: 0.6rem 0.7rem; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 0.7rem; }
+      #product { max-width: 1100px; margin: 0 auto; }
+      .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1.3rem; align-items: start; }
+      .surface, .review-panel { background: linear-gradient(150deg, rgba(20, 41, 37, 0.95), rgba(12, 28, 25, 0.97)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+      .surface { min-height: 570px; padding: clamp(1.2rem, 3vw, 2.35rem); }
+      .surface-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.8rem; }
+      .surface-heading h2 { margin: 0.35rem 0 0; font-size: clamp(1.4rem, 3vw, 2rem); letter-spacing: -0.03em; }
+      .surface-heading p { margin: 0.6rem 0 0; color: var(--muted); line-height: 1.55; }
+      .status-chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.42rem 0.65rem; color: var(--mint); background: rgba(81, 201, 149, 0.1); border: 1px solid rgba(81, 201, 149, 0.26); border-radius: 99rem; font-size: 0.72rem; white-space: nowrap; }
+      .status-chip.warn { color: var(--amber); background: rgba(242, 201, 121, 0.1); border-color: rgba(242, 201, 121, 0.25); }
+      .status-chip.danger { color: var(--rose); background: rgba(243, 155, 155, 0.1); border-color: rgba(243, 155, 155, 0.25); }
+      .status-chip.info { color: var(--sky); background: rgba(148, 201, 232, 0.1); border-color: rgba(148, 201, 232, 0.25); }
+
+      .field-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 1rem; }
+      label { display: grid; gap: 0.45rem; color: var(--muted); font-size: 0.82rem; }
+      input, textarea { width: 100%; padding: 0.85rem 0.9rem; color: var(--ink); background: rgba(4, 13, 12, 0.45); border: 1px solid var(--line-strong); border-radius: 0.75rem; }
+      input::placeholder, textarea::placeholder { color: #637572; }
+      textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
+      .helper { color: var(--quiet); font-size: 0.75rem; line-height: 1.45; }
+      .dropzone { display: grid; gap: 0.75rem; margin-top: 1.2rem; padding: 1.25rem; border: 1px dashed rgba(156, 229, 196, 0.35); border-radius: 1rem; background: rgba(156, 229, 196, 0.035); }
+      .dropzone-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+      .dropzone h3 { margin: 0; font-size: 0.95rem; }
+      .file-list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+      .file-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.7rem; background: rgba(0,0,0,0.15); border-radius: 0.65rem; }
+      .file-name { display: flex; align-items: center; gap: 0.55rem; min-width: 0; }
+      .file-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .file-meta { color: var(--quiet); font-family: var(--mono); font-size: 0.7rem; white-space: nowrap; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 1.45rem; }
+      .button { min-height: 2.7rem; padding: 0.7rem 1rem; color: #082118; background: var(--mint); border: 1px solid var(--mint); border-radius: 0.7rem; font-weight: 800; }
+      .button:hover { background: #b9f2d8; }
+      .button.secondary { color: var(--ink); background: transparent; border-color: var(--line-strong); }
+      .button.secondary:hover { background: rgba(255,255,255,0.06); }
+      .button.warn { color: #241a07; background: var(--amber); border-color: var(--amber); }
+      .button:disabled { cursor: not-allowed; opacity: 0.5; }
+      .callout { display: flex; gap: 0.75rem; margin: 1.2rem 0; padding: 0.9rem 1rem; color: var(--muted); background: rgba(148, 201, 232, 0.08); border: 1px solid rgba(148, 201, 232, 0.2); border-radius: 0.8rem; font-size: 0.82rem; line-height: 1.5; }
+      .callout strong { color: var(--sky); }
+      .callout.warning { background: rgba(242, 201, 121, 0.08); border-color: rgba(242, 201, 121, 0.22); }
+      .callout.warning strong { color: var(--amber); }
+      .callout.danger { background: rgba(243, 155, 155, 0.08); border-color: rgba(243, 155, 155, 0.22); }
+      .callout.danger strong { color: var(--rose); }
+      .progress { display: grid; gap: 0.7rem; margin: 2rem 0; }
+      .progress-track { height: 0.45rem; overflow: hidden; background: rgba(255,255,255,0.08); border-radius: 99rem; }
+      .progress-bar { width: 42%; height: 100%; background: var(--mint); border-radius: inherit; animation: progress 1.2s ease-in-out infinite alternate; }
+      .progress-copy { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: 0.8rem; }
+      @keyframes progress { from { transform: translateX(-15%); } to { transform: translateX(170%); } }
+      .reduced-motion *, .reduced-motion *::before, .reduced-motion *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+
+      .receipt-card { display: grid; gap: 1.2rem; padding: 1.1rem; background: rgba(81, 201, 149, 0.07); border: 1px solid rgba(81, 201, 149, 0.24); border-radius: 1rem; }
+      .receipt-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+      .receipt-top h3 { margin: 0.3rem 0 0; font-size: 1.2rem; }
+      .receipt-id { color: var(--mint); font-family: var(--mono); font-size: 0.72rem; word-break: break-all; }
+      .data-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+      .data-table th, .data-table td { padding: 0.72rem 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+      .data-table th { width: 38%; color: var(--quiet); font-weight: 500; }
+      .data-table td { color: var(--ink); word-break: break-word; }
+      .mono { font-family: var(--mono); font-size: 0.75rem; }
+      .result-hero { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: start; margin: 0.5rem 0 1.3rem; }
+      .result-icon { display: grid; width: 3rem; height: 3rem; place-items: center; color: #062217; background: var(--mint); border-radius: 1rem; font-size: 1.4rem; font-weight: 900; }
+      .result-icon.warn { color: #241a07; background: var(--amber); }
+      .result-icon.danger { color: #2b0b0b; background: var(--rose); }
+      .result-hero h3 { margin: 0; font-size: 1.5rem; letter-spacing: -0.03em; }
+      .result-hero p { margin: 0.45rem 0 0; color: var(--muted); line-height: 1.55; }
+      .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.65rem; margin: 1.25rem 0; }
+      .stat { padding: 0.85rem; background: rgba(0,0,0,0.15); border: 1px solid var(--line); border-radius: 0.8rem; }
+      .stat strong { display: block; font-size: 1.15rem; }
+      .stat span { color: var(--quiet); font-size: 0.72rem; }
+      .empty-state { display: grid; min-height: 360px; place-items: center; padding: 2rem; text-align: center; }
+      .empty-state .empty-mark { display: grid; width: 4rem; height: 4rem; place-items: center; margin: 0 auto 1rem; color: var(--mint); border: 1px solid rgba(156, 229, 196, 0.35); border-radius: 1.3rem; font-size: 1.6rem; }
+      .empty-state h3 { margin: 0; font-size: 1.4rem; }
+      .empty-state p { max-width: 27rem; margin: 0.6rem auto 0; color: var(--muted); line-height: 1.6; }
+
+      .review-panel { position: sticky; top: 1rem; padding: 1rem; box-shadow: none; }
+      .review-panel h2 { margin: 0.35rem 0 0.6rem; font-size: 1.05rem; }
+      .review-panel p { color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
+      .review-section { display: grid; gap: 0.5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+      .review-section h3 { margin: 0; color: var(--quiet); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; }
+      .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
+      .control-grid button { padding: 0.55rem 0.45rem; color: var(--muted); background: rgba(255,255,255,0.035); border: 1px solid var(--line); border-radius: 0.55rem; font-size: 0.72rem; }
+      .control-grid button:hover, .control-grid button[aria-pressed="true"] { color: var(--ink); background: rgba(156, 229, 196, 0.1); border-color: rgba(156, 229, 196, 0.3); }
+      .review-note { width: 100%; min-height: 78px; font-size: 0.78rem; }
+      .approval-status { color: var(--amber); font-size: 0.75rem; }
+      .approval-status.approved { color: var(--mint); }
+      .annotation { padding: 0.75rem; color: var(--muted); background: rgba(0,0,0,0.14); border-left: 2px solid var(--mint-strong); font-size: 0.75rem; line-height: 1.5; }
+      .annotation strong { color: var(--ink); }
+      .footer-note { max-width: 1100px; margin: 1rem auto 0; color: var(--quiet); font-size: 0.72rem; line-height: 1.5; }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+      @media (max-width: 900px) {
+        .shell { grid-template-columns: 1fr; }
+        .sidebar { display: block; padding: 1rem; border-right: 0; border-bottom: 1px solid var(--line); }
+        .brand { margin-bottom: 0.9rem; }
+        .nav { display: flex; overflow-x: auto; gap: 0.45rem; }
+        .nav button { width: auto; min-width: max-content; }
+        .sidebar-note { display: none; }
+        .layout { grid-template-columns: 1fr; }
+        .review-panel { position: static; }
+      }
+      @media (max-width: 620px) {
+        .main { padding: 1.35rem 0.9rem 3rem; }
+        .topbar { display: grid; margin-bottom: 1.5rem; }
+        .topbar h1 { font-size: 2.2rem; }
+        .role-switcher { justify-content: space-between; }
+        .field-grid, .stat-row { grid-template-columns: 1fr; }
+        .surface { min-height: 0; padding: 1rem; border-radius: 1.1rem; }
+        .surface-heading, .receipt-top { display: grid; }
+        .surface-heading .status-chip { justify-self: start; }
+        .data-table th { width: 43%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="prototype-banner"><strong>Read-only prototype</strong><span>all uploads, verification, and downloads are deterministic local mocks</span></div>
+    <div class="shell">
+      <aside class="sidebar" aria-label="Prototype navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">PV</div>
+          <div><div class="brand-name">ProofVault</div><div class="brand-subtitle">PROVENANCE / LOCAL MODE</div></div>
+        </div>
+        <div class="nav-label">Workspace</div>
+        <nav class="nav">
+          <button type="button" data-nav="seal" aria-current="page"><span class="nav-icon">＋</span><span>Seal collection</span></button>
+          <button type="button" data-nav="verify"><span class="nav-icon">⌕</span><span>Verify receipt</span></button>
+          <button type="button" data-nav="collections"><span class="nav-icon">◫</span><span>Collections</span></button>
+        </nav>
+        <div class="sidebar-note"><strong>Trust boundary</strong>This prototype never sends a file, receipt, credential, or telemetry event anywhere. Production Shelby behavior is intentionally unverified here.</div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">Agent-ready provenance workspace</div>
+            <h1 id="page-title">Store it once. Prove what it was.</h1>
+            <p id="page-description">Seal a small evidence collection, keep its receipt, and verify exact bytes whenever you need to hand the work to a person or another agent.</p>
+          </div>
+          <label class="role-switcher">View mode
+            <select id="role-select" aria-label="View mode">
+              <option value="human">Human</option>
+              <option value="agent">Agent</option>
+            </select>
+          </label>
+        </header>
+
+        <div id="product" aria-live="off"></div>
+        <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+        <p class="footer-note">Prototype evidence boundary: browser interaction proves only the intended flow shape. It does not prove native haptics, backend correctness, Shelby persistence, or production performance.</p>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const sampleFiles = [
+          { name: "research-brief.pdf", size: "1.8 MB", type: "application/pdf", hash: "4b5a…8e2c" },
+          { name: "run-metadata.json", size: "12 KB", type: "application/json", hash: "9a1d…c044" }
+        ];
+        const stateLabels = {
+          seal: "Seal entry", sealing: "Sealing", receipt: "Receipt ready", verify: "Verify receipt", verifying: "Verifying",
+          verified: "Verified", incomplete: "Incomplete", invalid: "Invalid", expired: "Expired", recovery: "Recover evidence",
+          package: "Package ready", collections: "Collections", empty: "Empty collections", unavailable: "Storage unavailable",
+          permission: "Access restricted", offline: "Connection unavailable", error: "Something went wrong"
+        };
+        const transitionNotes = {
+          seal: ["Page", "No motion yet", "none", "The first task is local and reversible."],
+          sealing: ["Page", "Inline progress bar", "medium", "Streaming work stays visible; there is no fake percentage."],
+          receipt: ["Page", "Receipt enters with a short fade", "success", "The receipt is the durable proof object and the next action stays nearby."],
+          verify: ["Page", "Keep receipt context visible", "none", "Verification begins from a known receipt, not a blank dashboard."],
+          verifying: ["Page", "Inline progress bar", "none", "The mock can be advanced manually from review controls."],
+          verified: ["Page", "Status settles in place", "success", "Exact-byte status and recovery actions are shown together."],
+          incomplete: ["Page", "Warning status settles in place", "warning", "Missing bytes are explicit; the interface does not call them verified."],
+          invalid: ["Page", "Danger status settles in place", "warning", "Digest mismatch is actionable and never hidden behind a generic success."],
+          expired: ["Page", "Warning status settles in place", "warning", "Expiration is a domain result with a safe return path."],
+          recovery: ["Page", "Progress bar", "none", "Recovery is a separate, interruptible task."],
+          package: ["Page", "Success settles in place", "success", "The browser download is simulated and labeled as such."],
+          collections: ["Page", "Context remains in workspace", "none", "Collection history is an owned-caller view, not public discovery."],
+          empty: ["Page", "Guidance appears in place", "none", "First-use guidance points to the one primary action."],
+          unavailable: ["Inline/page", "Warning callout", "warning", "The storage boundary is visible; retry does not silently duplicate work."],
+          permission: ["Page", "Warning callout", "warning", "Ownership denial does not reveal whether another collection exists."],
+          offline: ["Inline/page", "Warning callout", "warning", "The user can retry or leave without losing a hidden mutation."],
+          error: ["Inline/page", "Danger callout", "warning", "Unknown failures remain recoverable and are not reported as sealed."]
+        };
+
+        let currentState = "seal";
+        let selectedFiles = [];
+        let collectionName = "Quarterly research bundle";
+        let expiresAt = "2026-09-30T12:00";
+        let role = "human";
+        let reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        let approval = "pending";
+        let approvalNotes = "";
+        let toast = "";
+
+        const product = document.getElementById("product");
+        const announcer = document.getElementById("announcer");
+        const title = document.getElementById("page-title");
+        const roleSelect = document.getElementById("role-select");
+
+        const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character]);
+        const bytes = (value) => escapeHTML(value);
+        const sampleReceipt = "col_demo_01 / manifestSha256 2d7f…a81c";
+
+        function setState(next, message) {
+          currentState = next;
+          render();
+          announcer.textContent = message || stateLabels[next] || "State changed";
+          window.requestAnimationFrame(() => title.focus({ preventScroll: false }));
+        }
+
+        function navButtons() {
+          document.querySelectorAll("[data-nav]").forEach((button) => {
+            button.setAttribute("aria-current", (button.dataset.nav === (currentState === "verify" || currentState === "verifying" || ["verified", "incomplete", "invalid", "expired"].includes(currentState) ? "verify" : currentState === "collections" || currentState === "empty" ? "collections" : "seal")) ? "page" : "false");
+            button.addEventListener("click", () => {
+              const next = button.dataset.nav === "verify" ? "verify" : button.dataset.nav === "collections" ? "collections" : "seal";
+              if (next === "collections") setState(selectedFiles.length ? "collections" : "empty", "Collections opened");
+              else setState(next, `${stateLabels[next]} opened`);
+            });
+          });
+        }
+
+        function statusChip(label, kind) { return `<span class="status-chip ${kind || ""}"><span aria-hidden="true">●</span>${label}</span>`; }
+        function shellHeading(eyebrow, heading, description, chip) {
+          return `<div class="surface-heading"><div><div class="eyebrow">${eyebrow}</div><h2 tabindex="-1" id="surface-title">${heading}</h2><p>${description}</p></div>${chip || ""}</div>`;
+        }
+        function filesMarkup() {
+          if (!selectedFiles.length) return `<div class="helper">No files selected yet. Use the deterministic sample set for this review.</div>`;
+          return `<ul class="file-list" aria-label="Selected files">${selectedFiles.map((file) => `<li class="file-row"><span class="file-name"><span aria-hidden="true">▧</span><span>${bytes(file.name)}</span></span><span class="file-meta">${bytes(file.size)} · ${bytes(file.type)}</span></li>`).join("")}</ul>`;
+        }
+        function productShell(content) {
+          const note = transitionNotes[currentState] || transitionNotes.seal;
+          const controls = reviewControls();
+          product.innerHTML = `<div class="layout"><section class="surface">${content}</section>${controls}</div>`;
+          navButtons();
+          document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => action(button.dataset.action)));
+          const heading = document.getElementById("surface-title");
+          if (heading) heading.focus({ preventScroll: false });
+          document.querySelectorAll("[data-approval]").forEach((button) => button.addEventListener("click", () => { approval = button.dataset.approval; render(); }));
+          const noteInput = document.getElementById("approval-notes");
+          if (noteInput) noteInput.addEventListener("input", (event) => { approvalNotes = event.target.value; });
+          const motionToggle = document.getElementById("motion-toggle");
+          if (motionToggle) motionToggle.addEventListener("change", (event) => { reducedMotion = event.target.checked; document.documentElement.classList.toggle("reduced-motion", reducedMotion); });
+          const roleControl = document.getElementById("role-control");
+          if (roleControl) roleControl.addEventListener("change", (event) => { role = event.target.value; render(); });
+          document.documentElement.classList.toggle("reduced-motion", reducedMotion);
+          title.setAttribute("tabindex", "-1");
+          return note;
+        }
+        function reviewControls() {
+          const resultButtons = ["verified", "incomplete", "invalid", "expired"].map((state) => `<button type="button" data-action="state:${state}" aria-pressed="${currentState === state}">${stateLabels[state]}</button>`).join("");
+          const otherButtons = ["unavailable", "permission", "offline", "error", "empty"].map((state) => `<button type="button" data-action="state:${state}" aria-pressed="${currentState === state}">${stateLabels[state]}</button>`).join("");
+          const noteText = transitionNotes[currentState] || transitionNotes.seal;
+          return `<aside class="review-panel" aria-label="Prototype review controls">
+            <div class="eyebrow">Review controls</div>
+            <h2>Make every branch reachable</h2>
+            <p>These controls are outside the proposed product chrome. They are deterministic and have no backend side effect.</p>
+            <div class="review-section"><h3>Jump to state</h3><div class="control-grid"><button type="button" data-action="state:seal" aria-pressed="${currentState === "seal"}">Seal entry</button><button type="button" data-action="state:sealing" aria-pressed="${currentState === "sealing"}">Sealing</button><button type="button" data-action="state:receipt" aria-pressed="${currentState === "receipt"}">Receipt</button><button type="button" data-action="state:verify" aria-pressed="${currentState === "verify"}">Verify entry</button><button type="button" data-action="state:verifying" aria-pressed="${currentState === "verifying"}">Verifying</button><button type="button" data-action="state:recovery" aria-pressed="${currentState === "recovery"}">Recovery</button><button type="button" data-action="state:package" aria-pressed="${currentState === "package"}">Package ready</button><button type="button" data-action="state:collections" aria-pressed="${currentState === "collections"}">Collections</button></div></div>
+            <div class="review-section"><h3>Result branches</h3><div class="control-grid">${resultButtons}</div></div>
+            <div class="review-section"><h3>Failure branches</h3><div class="control-grid">${otherButtons}</div></div>
+            <div class="review-section"><h3>View and accessibility</h3><label>Role<select id="role-control"><option value="human" ${role === "human" ? "selected" : ""}>Human</option><option value="agent" ${role === "agent" ? "selected" : ""}>Agent</option></select></label><label style="display:flex;align-items:center;gap:.55rem;margin-top:.55rem"><input id="motion-toggle" type="checkbox" ${reducedMotion ? "checked" : ""} style="width:auto" /> Reduce motion</label></div>
+            <div class="review-section"><h3>Transition annotation</h3><div class="annotation"><strong>${noteText[0]} · ${noteText[2]}</strong><br />${noteText[1]}. ${noteText[3]}</div></div>
+            <div class="review-section"><h3>Approval surface</h3><label for="approval-notes">Reviewer notes<textarea id="approval-notes" class="review-note" placeholder="What should change before production?"></textarea></label><div class="control-grid"><button type="button" data-approval="approved" aria-pressed="${approval === "approved"}">Approve</button><button type="button" data-approval="revise" aria-pressed="${approval === "revise"}">Request revision</button><button type="button" data-approval="rejected" aria-pressed="${approval === "rejected"}">Reject</button></div><div class="approval-status ${approval === "approved" ? "approved" : ""}" role="status">Decision: ${escapeHTML(approval)}${approvalNotes ? " · notes saved locally" : ""}</div></div>
+          </aside>`;
+        }
+
+        function sealEntry() {
+          return `${shellHeading("Seal a collection", "A calm handoff for important bytes", "Start with a name, an expiration, and the files you want to prove. The prototype uses a fixed local sample and never uploads it.", statusChip("Local mock", "info"))}
+            <form id="seal-form" novalidate>
+              <div class="field-grid"><label for="collection-name">Collection name<input id="collection-name" name="name" value="${bytes(collectionName)}" autocomplete="off" /><span class="helper">Shown on the receipt and in the owner’s collection view.</span></label><label for="expires-at">Expires at<input id="expires-at" name="expiresAt" type="datetime-local" value="${bytes(expiresAt)}" /><span class="helper">Expiration is explicit; it is not hidden in a default.</span></label></div>
+              <div class="dropzone"><div class="dropzone-head"><div><h3>Evidence files</h3><div class="helper">1–20 files · streamed and hashed in production</div></div><button class="button secondary" type="button" data-action="sample-files">Use sample set</button></div>${filesMarkup()}</div>
+              <div class="callout"><span aria-hidden="true">✦</span><div><strong>Safety note.</strong> ProofVault proves byte integrity and provenance. It does not inspect whether content is true or safe, and the first release should not receive secrets or regulated personal data.</div></div>
+              <div class="actions"><button class="button" type="submit">Seal collection</button><button class="button secondary" type="button" data-action="clear-files">Clear sample files</button></div>
+            </form>`;
+        }
+        function sealing() {
+          return `${shellHeading("Seal a collection", "Streaming the evidence", "The service is hashing exact bytes and preparing a canonical manifest. This is a deterministic mock of the local API boundary.", statusChip("In progress", "info"))}<div class="progress" role="status"><div class="progress-copy"><span>Hashing selected files</span><span>Step 2 of 3</span></div><div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div><div class="helper">No percentage is claimed until the storage adapter acknowledges the complete object.</div></div><div class="actions"><button class="button" type="button" data-action="advance-seal">Advance mock response</button><button class="button secondary" type="button" data-action="cancel">Cancel</button></div>`;
+        }
+        function receipt() {
+          return `${shellHeading("Seal complete", "Your receipt is ready", "The collection is sealed in the local mock. Keep the receipt with the handoff; it identifies the manifest without exposing credentials.", statusChip("Sealed", ""))}<div class="receipt-card"><div class="receipt-top"><div><div class="eyebrow">Collection</div><h3>${bytes(collectionName)}</h3><div class="receipt-id">col_demo_01</div></div>${statusChip("Owner only", "info")}</div><table class="data-table"><tbody><tr><th scope="row">Manifest digest</th><td class="mono">2d7f0c98…a81c</td></tr><tr><th scope="row">Expires</th><td>${bytes(expiresAt.replace("T", " "))}</td></tr><tr><th scope="row">Artifacts</th><td>${selectedFiles.length || 2} exact-byte records</td></tr><tr><th scope="row">Storage</th><td>Local adapter · runtime proof required for production claims</td></tr></tbody></table></div><div class="actions"><button class="button" type="button" data-action="verify-from-receipt">Verify receipt</button><button class="button secondary" type="button" data-action="recovery">Recover evidence package</button><button class="button secondary" type="button" data-action="seal">Start another seal</button></div>`;
+        }
+        function verifyEntry() {
+          return `${shellHeading("Verify a receipt", "Check the exact bytes", "Paste or select a receipt from an owned collection. Verification reports the difference between verified, incomplete, invalid, and expired.", statusChip("Owner boundary", "info"))}<label for="receipt-input">Receipt reference<textarea id="receipt-input" aria-describedby="receipt-helper">${sampleReceipt}</textarea><span id="receipt-helper" class="helper">Prototype value only. Production will validate the version, collection ID, manifest key, digest, and expiration.</span></label><div class="actions"><button class="button" type="button" data-action="start-verify">Verify receipt</button><button class="button secondary" type="button" data-action="seal">Back to seal</button></div>`;
+        }
+        function verifying() {
+          return `${shellHeading("Verify a receipt", "Comparing the collection", "The manifest is being checked first, then each retrievable artifact is hashed as a stream.", statusChip("Checking", "info"))}<div class="progress" role="status"><div class="progress-copy"><span>Comparing manifest and artifact digests</span><span>Step 2 of 2</span></div><div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div><div class="helper">Choose a result branch in Review controls or advance to the verified mock.</div></div><div class="actions"><button class="button" type="button" data-action="advance-verify">Advance to verified</button><button class="button secondary" type="button" data-action="cancel">Cancel</button></div>`;
+        }
+        function resultState(kind) {
+          const config = {
+            verified: { chip: statusChip("Verified", ""), icon: "✓", heading: "Every byte matches", copy: "The receipt, canonical manifest, and all retrievable artifacts agree. This is the strongest result in the local mock.", iconClass: "", stats: ["2", "0", "0"], labels: ["verified", "missing", "invalid"] },
+            incomplete: { chip: statusChip("Incomplete", "warn"), icon: "!", heading: "Some evidence is missing", copy: "The manifest is readable, but one or more required artifacts could not be retrieved. The collection is not reported as verified.", iconClass: "warn", stats: ["1", "1", "0"], labels: ["verified", "missing", "invalid"] },
+            invalid: { chip: statusChip("Invalid", "danger"), icon: "×", heading: "The bytes do not match", copy: "At least one retrieved artifact differs from the digest recorded in the manifest. Do not use this collection as verified evidence.", iconClass: "danger", stats: ["1", "0", "1"], labels: ["verified", "missing", "invalid"] },
+            expired: { chip: statusChip("Expired", "warn"), icon: "⌁", heading: "The collection has expired", copy: "The receipt is structurally valid, but its declared expiration has passed. Retrieval and recovery depend on the selected storage policy.", iconClass: "warn", stats: ["0", "0", "0"], labels: ["verified", "missing", "invalid"] }
+          }[kind];
+          return `${shellHeading("Verification result", config.heading, config.copy, config.chip)}<div class="result-hero"><div class="result-icon ${config.iconClass}" aria-hidden="true">${config.icon}</div><div><h3>${config.heading}</h3><p>Collection <span class="mono">col_demo_01</span> · checked just now in the local mock.</p></div></div><div class="stat-row">${config.stats.map((value, index) => `<div class="stat"><strong>${value}</strong><span>${config.labels[index]}</span></div>`).join("")}</div><table class="data-table"><thead><tr><th scope="col">Artifact</th><th scope="col">Result</th><th scope="col">Digest</th></tr></thead><tbody>${selectedFiles.length ? selectedFiles.map((file, index) => `<tr><td>${bytes(file.name)}</td><td>${index === 1 && kind === "incomplete" ? "missing" : kind === "invalid" && index === 0 ? "mismatch" : kind === "expired" ? "not retrieved" : "verified"}</td><td class="mono">${index === 0 ? file.hash : "—"}</td></tr>`).join("") : `<tr><td>research-brief.pdf</td><td>verified</td><td class="mono">4b5a…8e2c</td></tr><tr><td>run-metadata.json</td><td>${kind === "incomplete" ? "missing" : "verified"}</td><td class="mono">${kind === "incomplete" ? "—" : "9a1d…c044"}</td></tr>`}</tbody></table><div class="actions"><button class="button secondary" type="button" data-action="recovery">Recover available evidence</button><button class="button secondary" type="button" data-action="verify">Verify another receipt</button><button class="button secondary" type="button" data-action="collections">Open collections</button></div>`;
+        }
+        function recovery() {
+          return `${shellHeading("Recover evidence", "Prepare a safe evidence package", "The package contains the canonical manifest, verification report, and retrievable artifacts. The prototype never creates a real ZIP or downloads data.", statusChip("Read-only mock", "info"))}<div class="callout"><span aria-hidden="true">▣</span><div><strong>Package contents.</strong> <span class="mono">manifest.json</span>, <span class="mono">verification-report.json</span>, and sanitized files under <span class="mono">artifacts/</span>.</div></div><div class="progress" role="status"><div class="progress-copy"><span>Staging package entries</span><span>Ready when advanced</span></div><div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div></div><div class="actions"><button class="button" type="button" data-action="advance-recovery">Advance mock recovery</button><button class="button secondary" type="button" data-action="verify">Back to verification</button></div>`;
+        }
+        function packageReady() {
+          return `${shellHeading("Recovery complete", "Evidence package is ready", "The mock package has a stable name and an explicit content list. A production download will be streamed and ownership-checked.", statusChip("Ready", ""))}<div class="receipt-card"><div class="receipt-top"><div><div class="eyebrow">Package</div><h3 class="mono">proofvault-col_demo_01.zip</h3></div>${statusChip("Simulated", "info")}</div><table class="data-table"><tbody><tr><th scope="row">Included</th><td>manifest.json · verification-report.json · 2 artifacts</td></tr><tr><th scope="row">Integrity</th><td>Each entry remains tied to its recorded SHA-256</td></tr><tr><th scope="row">Download</th><td>Browser download is intentionally simulated in this prototype</td></tr></tbody></table></div><div class="actions"><button class="button" type="button" data-action="simulate-download">Simulate download</button><button class="button secondary" type="button" data-action="collections">Open collections</button></div>${toast ? `<div class="callout" role="status"><span aria-hidden="true">✓</span><div><strong>${escapeHTML(toast)}</strong> No file left this browser.</div></div>` : ""}`;
+        }
+        function collections() {
+          if (!selectedFiles.length) return emptyCollections();
+          return `${shellHeading("Collections", "Owned evidence, easy to revisit", "Only collections belonging to the current caller appear here. Public discovery is not part of this product.", statusChip("1 collection", "info"))}<div class="receipt-card"><div class="receipt-top"><div><div class="eyebrow">Sealed locally</div><h3>${bytes(collectionName)}</h3><div class="receipt-id">col_demo_01</div></div>${statusChip("Sealed", "")}</div><table class="data-table"><tbody><tr><th scope="row">Last result</th><td>Verified · 2 of 2 artifacts</td></tr><tr><th scope="row">Expires</th><td>${bytes(expiresAt.replace("T", " "))}</td></tr><tr><th scope="row">Next safe action</th><td>Verify again or recover an evidence package</td></tr></tbody></table><div class="actions"><button class="button" type="button" data-action="verify-from-receipt">Verify</button><button class="button secondary" type="button" data-action="recovery">Recover package</button></div></div>`;
+        }
+        function emptyCollections() {
+          return `${shellHeading("Collections", "Nothing sealed yet", "Your owned collections will appear here after the first successful seal. This empty state keeps one clear next action.", statusChip("First use", "info"))}<div class="empty-state"><div><div class="empty-mark" aria-hidden="true">＋</div><h3>Start with one collection</h3><p>Use the local sample set to walk through the complete upload-to-receipt flow without sending data anywhere.</p><div class="actions" style="justify-content:center"><button class="button" type="button" data-action="seal">Seal a collection</button></div></div></div>`;
+        }
+        function failureState(kind) {
+          const config = {
+            unavailable: ["Storage is unavailable", "The selected storage boundary did not acknowledge the write. Nothing is reported as sealed.", "Retry the local mock or leave the flow safely.", "warn"],
+            permission: ["This collection is not available", "The current caller cannot access that object. The interface does not reveal whether another caller owns it.", "Return to your owned collections.", "danger"],
+            offline: ["Connection unavailable", "The request cannot be completed while the dependency is unavailable. No hidden mutation is assumed.", "Retry when the connection is restored or return to the previous safe state.", "warn"],
+            error: ["The operation did not finish", "An unknown failure occurred before a durable receipt was returned. Do not treat this attempt as sealed.", "Retry once the local service is healthy.", "danger"]
+          }[kind];
+          return `${shellHeading("Needs attention", config[0], config[1], statusChip("No success claimed", config[3]))}<div class="callout ${config[3] === "danger" ? "danger" : "warning"}" role="alert"><span aria-hidden="true">!</span><div><strong>${config[2]}</strong><br />The only safe product claim is that this attempt remains unresolved.</div></div><div class="actions"><button class="button warn" type="button" data-action="retry">Retry</button><button class="button secondary" type="button" data-action="seal">Return to seal</button></div>`;
+        }
+
+        function render() {
+          let content;
+          if (currentState === "seal") content = sealEntry();
+          else if (currentState === "sealing") content = sealing();
+          else if (currentState === "receipt") content = receipt();
+          else if (currentState === "verify") content = verifyEntry();
+          else if (currentState === "verifying") content = verifying();
+          else if (["verified", "incomplete", "invalid", "expired"].includes(currentState)) content = resultState(currentState);
+          else if (currentState === "recovery") content = recovery();
+          else if (currentState === "package") content = packageReady();
+          else if (currentState === "collections") content = collections();
+          else if (currentState === "empty") content = emptyCollections();
+          else content = failureState(currentState);
+          productShell(content);
+          if (role === "agent") {
+            const roleBanner = document.createElement("div");
+            roleBanner.className = "callout";
+            roleBanner.innerHTML = `<span aria-hidden="true">⌘</span><div><strong>Agent view.</strong> State <span class="mono">${currentState}</span> maps to the same versioned API flow. No API request is made by this prototype.</div>`;
+            product.querySelector(".surface").prepend(roleBanner);
+          }
+        }
+
+        function action(kind) {
+          toast = "";
+          if (kind.startsWith("state:")) { setState(kind.slice(6), `${stateLabels[kind.slice(6)]} selected`); return; }
+          if (kind === "sample-files") { selectedFiles = [...sampleFiles]; render(); announcer.textContent = "Sample evidence set selected"; return; }
+          if (kind === "clear-files") { selectedFiles = []; render(); announcer.textContent = "Sample evidence set cleared"; return; }
+          if (kind === "seal") { setState("seal", "Seal entry opened"); return; }
+          if (kind === "advance-seal") { setState("receipt", "Receipt ready; collection sealed in local mock"); return; }
+          if (kind === "verify" || kind === "verify-from-receipt") { setState("verify", "Verify receipt opened"); return; }
+          if (kind === "start-verify" || kind === "advance-verify") { setState(kind === "start-verify" ? "verifying" : "verified", kind === "start-verify" ? "Verification started" : "All mock artifacts verified"); return; }
+          if (kind === "recovery") { setState("recovery", "Recovery opened"); return; }
+          if (kind === "advance-recovery") { setState("package", "Evidence package ready in local mock"); return; }
+          if (kind === "simulate-download") { toast = "Download simulated."; render(); announcer.textContent = toast; return; }
+          if (kind === "retry") { setState("sealing", "Retry started"); return; }
+          if (kind === "cancel") { setState("seal", "Operation cancelled; no mutation occurred"); return; }
+        }
+
+        document.addEventListener("submit", (event) => {
+          if (event.target.id !== "seal-form") return;
+          event.preventDefault();
+          const name = document.getElementById("collection-name");
+          const expiry = document.getElementById("expires-at");
+          collectionName = name.value.trim();
+          expiresAt = expiry.value;
+          if (!collectionName || !expiresAt || !selectedFiles.length) {
+            const missing = !collectionName ? "collection name" : !expiresAt ? "expiration" : "at least one file";
+            setState("seal", `Validation error: add ${missing}`);
+            const callout = document.createElement("div");
+            callout.className = "callout warning";
+            callout.setAttribute("role", "alert");
+            callout.innerHTML = `<span aria-hidden="true">!</span><div><strong>Add ${missing}.</strong> The mock will not start a seal until the request is complete.</div>`;
+            product.querySelector(".surface").prepend(callout);
+            return;
+          }
+          setState("sealing", "Seal started; mock is hashing exact bytes");
+        });
+        roleSelect.addEventListener("change", (event) => { role = event.target.value; render(); });
+        document.documentElement.classList.toggle("reduced-motion", reducedMotion);
+        render();
+      })();
+    </script>
+  </body>
+</html>
