@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: proofvault
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /health/live
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: STORAGE_DRIVER
+        value: local
+      - key: LOCAL_STORAGE_DIR
+        value: .proofvault/storage
+      - key: DATABASE_URL
+        value: file:.proofvault/proofvault.db
+      - key: DEV_API_KEY
+        sync: false
