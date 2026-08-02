@@ -36,14 +36,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Build
+        run: pnpm build
+
       - name: Unit tests
         run: pnpm test
 
       - name: Contract tests
         run: pnpm test:contract
-
-      - name: Build
-        run: pnpm build
 
       - name: Secret scan
         run: pnpm security:secrets
