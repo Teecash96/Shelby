@@ -22,6 +22,7 @@ import type { Receipt } from '../domain/receipt.js';
 import { ProofVaultError, ValidationError } from '../domain/errors.js';
 import type { VerificationReport } from '../domain/verification.js';
 import type { Logger } from '../observability/logger.js';
+import { dashboardResponse, loadDashboardHtml } from './dashboard.js';
 
 export interface ServerDeps {
   index: CollectionIndexPort;
@@ -85,6 +86,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // aligned with the domain's aggregate upload limit.
   const bodyLimit = Math.max(10 * 1024 * 1024, maxRequestBytes + 1024 * 1024);
   const app = Fastify({ logger: false, bodyLimit });
+  const dashboardHtml = await loadDashboardHtml();
 
   await app.register(multipart, { limits: { fileSize: deps.maxFileBytes ?? 26214400 } });
 
@@ -149,7 +151,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // Auth: every route under /api/v1 requires a valid bearer key.
   app.addHook('preHandler', async (request, reply) => {
-    if (request.routeOptions.url?.startsWith('/health')) return;
+    const routeUrl = request.routeOptions.url ?? '';
+    if (
+      routeUrl.startsWith('/health') ||
+      routeUrl === '/' ||
+      routeUrl === '/dashboard' ||
+      routeUrl === '/seal' ||
+      routeUrl === '/verify' ||
+      routeUrl === '/collections' ||
+      routeUrl === '/collections/:collectionId'
+    )
+      return;
     const url = request.routeOptions.url ?? '';
     const isSeal = url.includes('/seal');
     const ipAllowed = isSeal
@@ -218,6 +230,28 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       storageReady = false;
     }
     return { status: storageReady ? 'ready' : 'degraded' };
+  });
+
+  for (const path of ['/', '/dashboard', '/seal', '/verify', '/collections']) {
+    app.get(path, async (_request, reply) => {
+      const rendered = dashboardResponse(dashboardHtml);
+      return reply
+        .header('Content-Type', 'text/html; charset=utf-8')
+        .header('Cache-Control', 'no-store')
+        .header('Content-Security-Policy', rendered.csp)
+        .header('X-Content-Type-Options', 'nosniff')
+        .send(rendered.body);
+    });
+  }
+
+  app.get('/collections/:collectionId', async (_request, reply) => {
+    const rendered = dashboardResponse(dashboardHtml);
+    return reply
+      .header('Content-Type', 'text/html; charset=utf-8')
+      .header('Cache-Control', 'no-store')
+      .header('Content-Security-Policy', rendered.csp)
+      .header('X-Content-Type-Options', 'nosniff')
+      .send(rendered.body);
   });
 
   app.post('/api/v1/seal', async (request, reply) => {

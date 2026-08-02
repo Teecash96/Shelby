@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:contract": "vitest run --config vitest.contract.config.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-web.mjs",
     "security:secrets": "node scripts/security/secrets-scan.mjs",
     "security:audit": "corepack pnpm audit --prod && node scripts/security/audit.mjs",
     "bootstrap": "node scripts/bootstrap.mjs",

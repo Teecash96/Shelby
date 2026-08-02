@@ -24,11 +24,11 @@ flowchart LR
 
 - Node.js 22 LTS or the latest LTS supported by the Shelby SDK; pin the selected version.
 - TypeScript with strict mode.
-- Next.js App Router for the dashboard and route handlers, unless Shelby SDK runtime constraints require a separate Fastify service. Decide after a minimal SDK import spike.
+- A small same-origin web client served by Fastify for the MVP. Keeping the dashboard shell and API on one origin avoids a second auth/session boundary and keeps Shelby SDK types out of browser code; a separate framework remains an optional later deployment decision.
 - `@shelby-protocol/sdk` and `@aptos-labs/ts-sdk` only inside the Shelby adapter.
 - Zod for request, environment, manifest, and response validation.
 - Vitest for unit and contract tests.
-- Playwright only after a dashboard prototype is approved.
+- Browser-level flow checks run against the served shell after the dashboard prototype is approved.
 - pnpm with a committed lockfile.
 
 ## Module boundaries
@@ -121,4 +121,4 @@ Local development defaults to `STORAGE_DRIVER=local`. `STORAGE_DRIVER=shelby` is
 
 ## UI gate
 
-The dashboard is a major new UI. CommandCode may scaffold routing and a non-styled diagnostic page, but production UI implementation is blocked until a representative upload-to-receipt prototype is reviewed and approved.
+The dashboard is a major new UI. The representative upload-to-receipt prototype was explicitly approved before production implementation. The production shell is served by Fastify, uses real API calls, and keeps uploaded bytes out of inline rendering.

@@ -1,6 +1,8 @@
 # ProofVault dashboard prototype
 
-Status: **review-only, read-only prototype**. This artifact does not call the API, write files, send analytics, or touch Shelby.
+Status: **approved design reference**. The production dashboard now lives at
+`web/index.html` and is served by the Fastify process. This prototype remains
+read-only and does not call the API, write files, send analytics, or touch Shelby.
 
 ## Compact design brief
 
@@ -35,4 +37,5 @@ Status: **review-only, read-only prototype**. This artifact does not call the AP
 - The prototype uses deterministic local mocks and never claims backend, Shelby, native haptic, or production performance proof.
 - Keyboard focus returns to the page heading after each state transition and important changes are announced through `aria-live`.
 - Reduced motion removes spatial transitions while preserving state meaning.
-- Production implementation remains blocked until this flow is explicitly approved.
+- Production implementation was approved before the real API wiring was added.
+- The production client keeps the same state language while replacing mock transitions with the documented local API contract.

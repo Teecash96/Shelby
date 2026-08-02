@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T21:51:55.000Z",
+  "generatedAt": "2026-08-02T02:57:47Z",
   "note": "Each verification entry references the real project file defining the command. Entries are truthful about what each command proves at the current phase.",
   "commands": [
     {
@@ -28,7 +28,7 @@
       "command": "pnpm test",
       "definition": "package.json scripts.test (vitest.config.ts)",
       "verified": true,
-      "whatItProves": "Unit, API vertical-slice, adapter, and CLI tests pass (206 tests at the current local phase; the Shelby integration remains explicitly skipped without testnet credentials)."
+      "whatItProves": "Unit, API vertical-slice, dashboard shell, adapter, and CLI tests pass (209 tests at the current local phase; the Shelby integration remains explicitly skipped without testnet credentials)."
     },
     {
       "name": "test:contract",
@@ -42,7 +42,7 @@
       "command": "pnpm build",
       "definition": "package.json scripts.build (tsconfig.build.json)",
       "verified": true,
-      "whatItProves": "TypeScript emits a clean build into dist/."
+      "whatItProves": "TypeScript emits a clean build into dist/ and copies the production dashboard shell into dist/web/."
     },
     {
       "name": "security:secrets",
