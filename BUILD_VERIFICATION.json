@@ -1,0 +1,104 @@
+{
+  "generatedAt": "2026-08-02T02:57:47Z",
+  "note": "Each verification entry references the real project file defining the command. Entries are truthful about what each command proves at the current phase.",
+  "commands": [
+    {
+      "name": "format:check",
+      "command": "pnpm format:check",
+      "definition": "package.json scripts.format:check",
+      "verified": true,
+      "whatItProves": "Source formatting matches Prettier."
+    },
+    {
+      "name": "lint",
+      "command": "pnpm lint",
+      "definition": "package.json scripts.lint (eslint.config.mjs)",
+      "verified": true,
+      "whatItProves": "ESLint reports zero errors with --max-warnings=0."
+    },
+    {
+      "name": "typecheck",
+      "command": "pnpm typecheck",
+      "definition": "package.json scripts.typecheck (tsconfig.json)",
+      "verified": true,
+      "whatItProves": "Strict TypeScript compiles with no type errors."
+    },
+    {
+      "name": "test",
+      "command": "pnpm test",
+      "definition": "package.json scripts.test (vitest.config.ts)",
+      "verified": true,
+      "whatItProves": "Unit, API vertical-slice, dashboard shell, adapter, and CLI tests pass (209 tests at the current local phase; the Shelby integration remains explicitly skipped without testnet credentials)."
+    },
+    {
+      "name": "test:contract",
+      "command": "pnpm test:contract",
+      "definition": "package.json scripts.test:contract (vitest.contract.config.ts)",
+      "verified": true,
+      "whatItProves": "Shared storage contract suite passes for the local adapter."
+    },
+    {
+      "name": "build",
+      "command": "pnpm build",
+      "definition": "package.json scripts.build (tsconfig.build.json)",
+      "verified": true,
+      "whatItProves": "TypeScript emits a clean build into dist/ and copies the production dashboard shell into dist/web/."
+    },
+    {
+      "name": "security:secrets",
+      "command": "pnpm security:secrets",
+      "definition": "package.json scripts.security:secrets (scripts/security/secrets-scan.mjs)",
+      "verified": true,
+      "whatItProves": "No high-signal secret patterns in tracked files."
+    },
+    {
+      "name": "security:audit",
+      "command": "pnpm security:audit",
+      "definition": "package.json scripts.security:audit (scripts/security/audit.mjs)",
+      "verified": true,
+      "whatItProves": "Production dependency tree is clean. Dev-only brace-expansion advisory on the ESLint minimatch chain is documented, pinned to best available versions, and does not fail the command."
+    },
+    {
+      "name": "bootstrap",
+      "command": "pnpm bootstrap",
+      "definition": "package.json scripts.bootstrap (scripts/bootstrap.mjs)",
+      "verified": true,
+      "whatItProves": "Idempotent environment + directory bootstrap succeeds without Shelby credentials; opens the collection index and runs migrations + seed."
+    },
+    {
+      "name": "migration:replay",
+      "command": "pnpm migration:replay",
+      "definition": "package.json scripts.migration:replay (scripts/migration-replay.mjs)",
+      "verified": true,
+      "whatItProves": "Migration replay is deterministic: runs twice to schema version 1 with the seed caller present and no duplicates."
+    },
+    {
+      "name": "auth:smoke",
+      "command": "pnpm auth:smoke",
+      "definition": "package.json scripts.auth:smoke (scripts/auth-smoke.mjs)",
+      "verified": true,
+      "whatItProves": "Real HTTP authorization flows against the local index: seeded dev caller seals (201); unknown key denied (403 FORBIDDEN); missing Authorization denied (401); another caller's collection hidden as 404 COLLECTION_NOT_FOUND."
+    },
+    {
+      "name": "runtime:proof",
+      "command": "pnpm runtime:proof",
+      "definition": "package.json scripts.runtime:proof (scripts/runtime-proof.mjs)",
+      "verified": true,
+      "whatItProves": "Local seal-to-verify vertical slice over HTTP with fresh evidence under evidence/: multipart seal (201), verify (verified), artifact download with SHA-256 digest match. Shelby testnet remains unverified (Phase 6): the adapter is implemented behind StoragePort and fails closed without real credentials; the contract suite is skipped (never mocked) until testnet credentials are provided."
+    },
+    {
+      "name": "start",
+      "command": "pnpm start",
+      "definition": "package.json scripts.start (dist/src/index.js)",
+      "verified": true,
+      "whatItProves": "Boots the ProofVault API with the local driver; fail-closed on STORAGE_DRIVER=shelby with a precise list of missing environment variables."
+    },
+    {
+      "name": "cli",
+      "command": "pnpm cli",
+      "definition": "package.json scripts.cli (src/cli/index.ts)",
+      "verified": true,
+      "whatItProves": "Thin agent-facing CLI over the local API: seal (streaming multipart, idempotent replay/conflict), verify, recover-artifact, recover-package; machine-readable --json output and documented exit codes."
+    }
+  ]
+}

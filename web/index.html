@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="ProofVault dashboard for sealing, verifying, and recovering owned evidence."
+    />
+    <title>ProofVault</title>
+    <style nonce="__PROOFVAULT_CSP_NONCE__">
+      :root {
+        color-scheme: dark;
+        --canvas: #091513;
+        --panel: #10221f;
+        --panel-raised: #142925;
+        --ink: #edf4f2;
+        --muted: #a4b6b1;
+        --quiet: #748782;
+        --line: rgba(205, 236, 224, 0.15);
+        --line-strong: rgba(205, 236, 224, 0.28);
+        --mint: #9ce5c4;
+        --mint-strong: #51c995;
+        --amber: #f2c979;
+        --rose: #f39b9b;
+        --sky: #94c9e8;
+        --shadow: 0 22px 55px rgba(0, 0, 0, 0.25);
+        --radius: 18px;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html { min-width: 320px; background: var(--canvas); }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 78% 4%, rgba(81, 201, 149, 0.13), transparent 28rem),
+          linear-gradient(160deg, #091513 0%, #0a1715 55%, #0b1213 100%);
+        font-family: var(--sans);
+        letter-spacing: 0.01em;
+      }
+      button, input, textarea { font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible {
+        outline: 3px solid rgba(156, 229, 196, 0.72);
+        outline-offset: 3px;
+      }
+      .shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); min-height: 100vh; }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 1.8rem;
+        padding: 2rem 1.35rem 1.2rem;
+        border-right: 1px solid var(--line);
+        background: rgba(7, 19, 17, 0.76);
+      }
+      .brand { display: flex; align-items: center; gap: 0.8rem; }
+      .brand-mark {
+        display: grid;
+        width: 2.35rem;
+        height: 2.35rem;
+        place-items: center;
+        color: #092017;
+        background: var(--mint);
+        border-radius: 0.8rem 0.8rem 0.8rem 0.2rem;
+        font-weight: 900;
+      }
+      .brand-name { font-weight: 800; letter-spacing: 0.04em; }
+      .brand-subtitle { margin-top: 0.15rem; color: var(--quiet); font-size: 0.7rem; }
+      .nav-label, .eyebrow {
+        color: var(--quiet);
+        font-size: 0.68rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .nav { display: grid; gap: 0.4rem; }
+      .nav button {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        width: 100%;
+        padding: 0.78rem 0.85rem;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 0.75rem;
+        text-align: left;
+      }
+      .nav button:hover, .nav button[aria-current="page"] {
+        color: var(--ink);
+        background: rgba(156, 229, 196, 0.08);
+        border-color: rgba(156, 229, 196, 0.17);
+      }
+      .nav-icon { width: 1.1rem; color: var(--mint); text-align: center; }
+      .trust-note {
+        margin-top: auto;
+        padding: 1rem;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        font-size: 0.78rem;
+        line-height: 1.5;
+      }
+      .trust-note strong { display: block; margin-bottom: 0.35rem; color: var(--mint); }
+      .main { min-width: 0; padding: 1.4rem clamp(1rem, 4vw, 4.4rem) 4rem; }
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1.2rem;
+        max-width: 1100px;
+        margin: 0 auto 2.3rem;
+      }
+      .topbar h1 { max-width: 39rem; margin: 0.4rem 0 0; font-size: clamp(1.9rem, 4vw, 3.25rem); line-height: 1.02; letter-spacing: -0.045em; }
+      .topbar p { max-width: 38rem; margin: 0.9rem 0 0; color: var(--muted); line-height: 1.65; }
+      .credential-panel {
+        display: grid;
+        min-width: min(100%, 290px);
+        gap: 0.5rem;
+        padding: 0.85rem;
+        background: rgba(16, 34, 31, 0.8);
+        border: 1px solid var(--line);
+        border-radius: 0.9rem;
+      }
+      .credential-panel label { color: var(--muted); font-size: 0.76rem; }
+      .credential-panel input { min-width: 0; padding: 0.62rem 0.7rem; }
+      .credential-panel small { color: var(--quiet); font-size: 0.68rem; line-height: 1.4; }
+      .api-state { display: flex; align-items: center; gap: 0.45rem; color: var(--quiet); font-size: 0.72rem; }
+      .api-state::before { width: 0.5rem; height: 0.5rem; background: var(--quiet); border-radius: 50%; content: ""; }
+      .api-state.ready { color: var(--mint); }
+      .api-state.ready::before { background: var(--mint-strong); }
+      .api-state.warn { color: var(--amber); }
+      .api-state.warn::before { background: var(--amber); }
+      #product { max-width: 1100px; margin: 0 auto; }
+      .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1.3rem; align-items: start; }
+      .surface, .side-card { background: linear-gradient(150deg, rgba(20, 41, 37, 0.95), rgba(12, 28, 25, 0.97)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+      .surface { min-height: 570px; padding: clamp(1.2rem, 3vw, 2.35rem); }
+      .side-card { position: sticky; top: 1rem; padding: 1rem; box-shadow: none; }
+      .surface-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.8rem; }
+      .surface-heading h2 { margin: 0.35rem 0 0; font-size: clamp(1.4rem, 3vw, 2rem); letter-spacing: -0.03em; }
+      .surface-heading p { margin: 0.6rem 0 0; color: var(--muted); line-height: 1.55; }
+      .status-chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.42rem 0.65rem; color: var(--mint); background: rgba(81, 201, 149, 0.1); border: 1px solid rgba(81, 201, 149, 0.26); border-radius: 99rem; font-size: 0.72rem; white-space: nowrap; }
+      .status-chip.warn { color: var(--amber); background: rgba(242, 201, 121, 0.1); border-color: rgba(242, 201, 121, 0.25); }
+      .status-chip.danger { color: var(--rose); background: rgba(243, 155, 155, 0.1); border-color: rgba(243, 155, 155, 0.25); }
+      .status-chip.info { color: var(--sky); background: rgba(148, 201, 232, 0.1); border-color: rgba(148, 201, 232, 0.25); }
+      .field-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 1rem; }
+      label { display: grid; gap: 0.45rem; color: var(--muted); font-size: 0.82rem; }
+      input, textarea { width: 100%; padding: 0.85rem 0.9rem; color: var(--ink); background: rgba(4, 13, 12, 0.45); border: 1px solid var(--line-strong); border-radius: 0.75rem; }
+      input::placeholder, textarea::placeholder { color: #637572; }
+      textarea { min-height: 180px; resize: vertical; line-height: 1.5; }
+      .helper { color: var(--quiet); font-size: 0.75rem; line-height: 1.45; }
+      .file-picker { display: grid; gap: 0.75rem; margin-top: 1.2rem; padding: 1.25rem; border: 1px dashed rgba(156, 229, 196, 0.35); border-radius: 1rem; background: rgba(156, 229, 196, 0.035); }
+      .file-picker h3 { margin: 0; font-size: 0.95rem; }
+      .file-picker input { padding: 0.75rem; background: rgba(0, 0, 0, 0.12); }
+      .file-list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+      .file-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.7rem; background: rgba(0, 0, 0, 0.15); border-radius: 0.65rem; }
+      .file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .file-meta { color: var(--quiet); font-family: var(--mono); font-size: 0.7rem; white-space: nowrap; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 1.45rem; }
+      .actions-centered { justify-content: center; }
+      .button { min-height: 2.7rem; padding: 0.7rem 1rem; color: #082118; background: var(--mint); border: 1px solid var(--mint); border-radius: 0.7rem; font-weight: 800; }
+      .button:hover { background: #b9f2d8; }
+      .button.secondary { color: var(--ink); background: transparent; border-color: var(--line-strong); }
+      .button.secondary:hover { background: rgba(255, 255, 255, 0.06); }
+      .button.warn { color: #241a07; background: var(--amber); border-color: var(--amber); }
+      .button:disabled { cursor: not-allowed; opacity: 0.5; }
+      .callout { display: flex; gap: 0.75rem; margin: 1.2rem 0; padding: 0.9rem 1rem; color: var(--muted); background: rgba(148, 201, 232, 0.08); border: 1px solid rgba(148, 201, 232, 0.2); border-radius: 0.8rem; font-size: 0.82rem; line-height: 1.5; }
+      .callout strong { color: var(--sky); }
+      .callout.warning { background: rgba(242, 201, 121, 0.08); border-color: rgba(242, 201, 121, 0.22); }
+      .callout.warning strong { color: var(--amber); }
+      .callout.danger { background: rgba(243, 155, 155, 0.08); border-color: rgba(243, 155, 155, 0.22); }
+      .callout.danger strong { color: var(--rose); }
+      .progress { display: grid; gap: 0.7rem; margin: 2rem 0; }
+      .progress-track { height: 0.45rem; overflow: hidden; background: rgba(255, 255, 255, 0.08); border-radius: 99rem; }
+      .progress-bar { width: 42%; height: 100%; background: var(--mint); border-radius: inherit; animation: progress 1.2s ease-in-out infinite alternate; }
+      .progress-copy { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: 0.8rem; }
+      @keyframes progress { from { transform: translateX(-15%); } to { transform: translateX(170%); } }
+      .receipt-card { display: grid; gap: 1.2rem; padding: 1.1rem; background: rgba(81, 201, 149, 0.07); border: 1px solid rgba(81, 201, 149, 0.24); border-radius: 1rem; }
+      .receipt-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+      .receipt-top h3 { margin: 0.3rem 0 0; font-size: 1.2rem; }
+      .receipt-id { color: var(--mint); font-family: var(--mono); font-size: 0.72rem; word-break: break-all; }
+      .data-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+      .data-table th, .data-table td { padding: 0.72rem 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+      .data-table th { width: 38%; color: var(--quiet); font-weight: 500; }
+      .data-table td { color: var(--ink); word-break: break-word; }
+      .mono { font-family: var(--mono); font-size: 0.75rem; }
+      .result-hero { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: start; margin: 0.5rem 0 1.3rem; }
+      .result-icon { display: grid; width: 3rem; height: 3rem; place-items: center; color: #062217; background: var(--mint); border-radius: 1rem; font-size: 1.4rem; font-weight: 900; }
+      .result-icon.warn { color: #241a07; background: var(--amber); }
+      .result-icon.danger { color: #2b0b0b; background: var(--rose); }
+      .result-hero h3 { margin: 0; font-size: 1.5rem; letter-spacing: -0.03em; }
+      .result-hero p { margin: 0.45rem 0 0; color: var(--muted); line-height: 1.55; }
+      .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.65rem; margin: 1.25rem 0; }
+      .stat { padding: 0.85rem; background: rgba(0, 0, 0, 0.15); border: 1px solid var(--line); border-radius: 0.8rem; }
+      .stat strong { display: block; font-size: 1.15rem; }
+      .stat span { color: var(--quiet); font-size: 0.72rem; }
+      .side-card h2 { margin: 0.35rem 0 0.6rem; font-size: 1.05rem; }
+      .side-card p { color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
+      .side-card ul { display: grid; gap: 0.55rem; margin: 1rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.76rem; line-height: 1.45; }
+      .side-card li::marker { color: var(--mint-strong); }
+      .side-divider { margin: 1rem 0; border: 0; border-top: 1px solid var(--line); }
+      .empty-state { display: grid; min-height: 360px; place-items: center; padding: 2rem; text-align: center; }
+      .empty-mark { display: grid; width: 4rem; height: 4rem; place-items: center; margin: 0 auto 1rem; color: var(--mint); border: 1px solid rgba(156, 229, 196, 0.35); border-radius: 1.3rem; font-size: 1.6rem; }
+      .empty-state h3 { margin: 0; font-size: 1.4rem; }
+      .empty-state p { max-width: 27rem; margin: 0.6rem auto 0; color: var(--muted); line-height: 1.6; }
+      .footer-note { max-width: 1100px; margin: 1rem auto 0; color: var(--quiet); font-size: 0.72rem; line-height: 1.5; }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+      [hidden] { display: none !important; }
+
+      @media (max-width: 900px) {
+        .shell { grid-template-columns: 1fr; }
+        .sidebar { display: block; padding: 1rem; border-right: 0; border-bottom: 1px solid var(--line); }
+        .brand { margin-bottom: 0.9rem; }
+        .nav { display: flex; overflow-x: auto; gap: 0.45rem; }
+        .nav button { width: auto; min-width: max-content; }
+        .trust-note { display: none; }
+        .layout { grid-template-columns: 1fr; }
+        .side-card { position: static; }
+      }
+      @media (max-width: 620px) {
+        .main { padding: 1.35rem 0.9rem 3rem; }
+        .topbar { display: grid; margin-bottom: 1.5rem; }
+        .topbar h1 { font-size: 2.2rem; }
+        .credential-panel { min-width: 0; }
+        .field-grid, .stat-row { grid-template-columns: 1fr; }
+        .surface { min-height: 0; padding: 1rem; border-radius: 1.1rem; }
+        .surface-heading, .receipt-top { display: grid; }
+        .surface-heading .status-chip { justify-self: start; }
+        .data-table th { width: 43%; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+      }
+    </style>
+  </head>
+  <body data-dashboard>
+    <div class="shell">
+      <aside class="sidebar" aria-label="ProofVault navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">PV</div>
+          <div><div class="brand-name">ProofVault</div><div class="brand-subtitle">PROVENANCE / OWNER MODE</div></div>
+        </div>
+        <div class="nav-label">Workspace</div>
+        <nav class="nav" aria-label="Workspace views">
+          <button type="button" data-view-target="seal" aria-current="page"><span class="nav-icon" aria-hidden="true">＋</span><span>Seal collection</span></button>
+          <button type="button" data-view-target="verify"><span class="nav-icon" aria-hidden="true">⌕</span><span>Verify receipt</span></button>
+          <button type="button" data-view-target="collections"><span class="nav-icon" aria-hidden="true">◫</span><span>Owned receipt</span></button>
+        </nav>
+        <div class="trust-note"><strong>Trust boundary</strong>Credentials stay in this browser tab. Files are sent only to this same-origin ProofVault API when you submit a seal.</div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">Agent-ready provenance workspace</div>
+            <h1 id="page-title">Store it once. Prove what it was.</h1>
+            <p id="page-description">Seal a small evidence collection, keep its receipt, and verify exact bytes whenever you need to hand the work to a person or another agent.</p>
+          </div>
+          <section class="credential-panel" aria-label="API session">
+            <label for="api-key">API key for this tab</label>
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a caller key" />
+            <small>Never saved, placed in a URL, or displayed after entry.</small>
+            <div id="api-state" class="api-state" role="status">Checking API…</div>
+          </section>
+        </header>
+
+        <div id="product" aria-describedby="page-description">
+          <div class="layout">
+            <section class="surface" aria-label="Dashboard workspace">
+              <div data-view="seal">
+                <div class="surface-heading"><div><div class="eyebrow">Seal entry</div><h2 id="surface-title">Create a durable receipt</h2><p>Name the collection, choose an expiration, and select the exact files to stream to the API.</p></div><span class="status-chip info">Local or configured server</span></div>
+                <form id="seal-form" novalidate>
+                  <div class="field-grid">
+                    <label for="collection-name">Collection name<input id="collection-name" name="name" required maxlength="200" autocomplete="off" placeholder="Quarterly research bundle" /><span class="helper">The name is recorded in the manifest and receipt context.</span></label>
+                    <label for="expires-at">Expires at<input id="expires-at" name="expiresAt" type="datetime-local" required /><span class="helper">The API enforces its configured retention window.</span></label>
+                  </div>
+                  <div class="file-picker">
+                    <h3>Evidence files</h3>
+                    <div class="helper">Select 1–20 files. The browser streams the multipart request; it does not read file contents into the page.</div>
+                    <input id="files" name="files" type="file" multiple required aria-label="Evidence files" aria-describedby="files-helper" />
+                    <span id="files-helper" class="helper">File names and sizes are shown here; byte hashes are produced by the API.</span>
+                    <ul id="file-list" class="file-list" aria-live="polite"><li class="helper">No files selected.</li></ul>
+                  </div>
+                  <div class="callout"><span aria-hidden="true">✦</span><div><strong>Safety note.</strong> ProofVault proves byte integrity and provenance. It does not decide whether content is true or safe; do not upload secrets or regulated personal data to a development instance.</div></div>
+                  <div id="seal-feedback" class="helper" role="status" aria-live="polite"></div>
+                  <div class="actions"><button class="button" type="submit">Seal collection</button><button class="button secondary" type="button" data-view-target="verify">Verify a receipt</button></div>
+                </form>
+              </div>
+
+              <div data-view="verify" hidden>
+                <div class="surface-heading"><div><div class="eyebrow">Verify receipt</div><h2>Check the exact bytes</h2><p>Paste a receipt from an owned collection. The response distinguishes verified, incomplete, invalid, and expired results.</p></div><span class="status-chip info">Caller-bound</span></div>
+                <form id="verify-form" novalidate>
+                  <label for="receipt-input">Receipt JSON<textarea id="receipt-input" required spellcheck="false" placeholder="Paste a ProofVault receipt JSON object"></textarea><span class="helper">A receipt is safe to share as a proof reference, but it does not grant access without the owning API key.</span></label>
+                  <div id="verify-feedback" class="helper" role="status" aria-live="polite"></div>
+                  <div class="actions"><button class="button" type="submit">Verify receipt</button><button class="button secondary" type="button" data-view-target="seal">Back to seal</button></div>
+                </form>
+              </div>
+
+              <div data-view="collections" hidden>
+                <div class="surface-heading"><div><div class="eyebrow">Owned receipt</div><h2>Return to your last handoff</h2><p>This first dashboard slice deliberately has no public discovery endpoint. It keeps the last receipt in memory and never invents a collection list.</p></div><span class="status-chip info">In-memory only</span></div>
+                <div id="collection-empty" class="empty-state"><div><div class="empty-mark" aria-hidden="true">＋</div><h3>No receipt in this tab</h3><p>Seal a collection successfully, or paste a receipt in the verification view.</p><div class="actions actions-centered"><button class="button" type="button" data-view-target="seal">Seal a collection</button></div></div></div>
+                <div id="collection-card" hidden></div>
+              </div>
+
+              <div data-view="receipt" hidden></div>
+              <div data-view="result" hidden></div>
+            </section>
+
+            <aside class="side-card" aria-label="Dashboard guidance">
+              <div class="eyebrow">Session boundary</div>
+              <h2>Keep the proof object close</h2>
+              <p>The receipt is the durable handoff. This UI holds it only in memory so a refresh clears the session.</p>
+              <ul>
+                <li>Same-origin API calls only</li>
+                <li>No public collection discovery</li>
+                <li>Recovery checks ownership and expiration</li>
+                <li>Shelby testnet status stays unverified</li>
+              </ul>
+              <hr class="side-divider" />
+              <div class="eyebrow">Next safe action</div>
+              <p id="next-action">Enter an API key, then select files to seal.</p>
+            </aside>
+          </div>
+        </div>
+        <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+        <p class="footer-note">ProofVault reports only what the selected server proves. This dashboard does not claim Shelby testnet persistence, wallet activity, or production deployment.</p>
+      </main>
+    </div>
+
+    <script nonce="__PROOFVAULT_CSP_NONCE__">
+      (() => {
+        "use strict";
+
+        const state = { view: "seal", files: [], receipt: null, verification: null, apiReady: false, busy: false };
+        const apiKey = document.getElementById("api-key");
+        const apiState = document.getElementById("api-state");
+        const announcer = document.getElementById("announcer");
+        const nextAction = document.getElementById("next-action");
+        const surface = document.querySelector(".surface");
+        const expiresAt = document.getElementById("expires-at");
+
+        function escapeHtml(value) {
+          return String(value ?? "").replace(/[&<>\"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character]);
+        }
+
+        function announce(message) {
+          announcer.textContent = "";
+          window.setTimeout(() => { announcer.textContent = message; }, 20);
+        }
+
+        function setApiState(kind, message) {
+          apiState.className = `api-state ${kind}`;
+          apiState.textContent = message;
+        }
+
+        function keyOrError() {
+          const value = apiKey.value.trim();
+          if (!value) {
+            throw new Error("Enter the API key for this caller before making a request.");
+          }
+          return value;
+        }
+
+        function setBusy(busy) {
+          state.busy = busy;
+          document.querySelectorAll("button").forEach((button) => { button.disabled = busy; });
+          document.querySelectorAll("input, textarea").forEach((field) => { field.disabled = busy && field.id !== "api-key"; });
+        }
+
+        function formatBytes(bytes) {
+          if (bytes < 1024) return `${bytes} B`;
+          if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+          return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        }
+
+        function defaultExpiry() {
+          const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+          date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+          return date.toISOString().slice(0, 16);
+        }
+
+        function renderFiles() {
+          const list = document.getElementById("file-list");
+          if (!state.files.length) {
+            list.innerHTML = '<li class="helper">No files selected.</li>';
+            return;
+          }
+          list.innerHTML = state.files.map((file) => `<li class="file-row"><span class="file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span><span class="file-meta">${formatBytes(file.size)} · ${escapeHtml(file.type || "application/octet-stream")}</span></li>`).join("");
+        }
+
+        function showView(view) {
+          state.view = view;
+          document.querySelectorAll("[data-view]").forEach((section) => { section.hidden = section.dataset.view !== view; });
+          document.querySelectorAll("[data-view-target]").forEach((button) => {
+            if (button.tagName !== "BUTTON") return;
+            button.setAttribute("aria-current", button.dataset.viewTarget === view ? "page" : "false");
+          });
+          if (view === "collections") renderCollections();
+          const heading = document.querySelector(`[data-view="${view}"] h2`) || document.getElementById("page-title");
+          if (heading) {
+            heading.setAttribute("tabindex", "-1");
+            heading.focus({ preventScroll: true });
+          }
+          nextAction.textContent = view === "seal" ? "Select files and submit a seal." : view === "verify" ? "Paste a receipt and verify its exact bytes." : "Use the receipt actions or return to sealing.";
+          announce(`${view} view opened`);
+        }
+
+        function reportError(error, feedback) {
+          const message = error instanceof Error ? error.message : "The request could not be completed.";
+          feedback.innerHTML = `<div class="callout danger" role="alert"><span aria-hidden="true">!</span><div><strong>Request not completed.</strong> ${escapeHtml(message)}</div></div>`;
+          announce(`Request failed: ${message}`);
+        }
+
+        async function responseError(response) {
+          let body = null;
+          try { body = await response.json(); } catch { /* preserve the stable fallback */ }
+          const detail = body && body.error ? `${body.error.code}: ${body.error.message}${body.error.requestId ? ` (request ${body.error.requestId})` : ""}` : `HTTP ${response.status}`;
+          throw new Error(detail);
+        }
+
+        async function apiFetch(path, options = {}) {
+          const headers = new Headers(options.headers || {});
+          headers.set("Authorization", `Bearer ${keyOrError()}`);
+          const response = await fetch(path, { ...options, headers });
+          if (!response.ok) await responseError(response);
+          return response;
+        }
+
+        function renderReceipt() {
+          const panel = document.querySelector('[data-view="receipt"]');
+          const receipt = state.receipt;
+          if (!receipt) { panel.innerHTML = ""; return; }
+          const artifactRows = (receipt.artifacts || []).map((artifact) => `<tr><td>${escapeHtml(artifact.filename)}</td><td>${formatBytes(artifact.size)}</td><td class="mono">${escapeHtml(artifact.sha256)}</td><td><button class="button secondary artifact-button" type="button" data-artifact-id="${escapeHtml(artifact.artifactId)}" data-filename="${escapeHtml(artifact.filename)}">Download</button></td></tr>`).join("");
+          panel.innerHTML = `<div class="surface-heading"><div><div class="eyebrow">Receipt ready</div><h2>Keep this proof object</h2><p>The API returned a durable receipt. It can be verified again without re-uploading the source files.</p></div><span class="status-chip">Sealed</span></div><div class="receipt-card"><div class="receipt-top"><div><div class="eyebrow">Collection</div><h3>${escapeHtml(receipt.collectionId)}</h3><div class="receipt-id">${escapeHtml(receipt.receipt.manifestSha256)}</div></div><span class="status-chip info">${receipt.replayed ? "Idempotent replay" : "New seal"}</span></div><table class="data-table"><tbody><tr><th scope="row">Expires</th><td>${escapeHtml(receipt.receipt.expiresAt)}</td></tr><tr><th scope="row">Manifest key</th><td class="mono">${escapeHtml(receipt.receipt.manifestKey)}</td></tr><tr><th scope="row">Artifacts</th><td>${receipt.artifacts.length} exact-byte records</td></tr></tbody></table><div><button class="button secondary" type="button" id="copy-receipt">Copy receipt JSON</button></div></div><div class="receipt-card"><div class="eyebrow">Artifacts</div><table class="data-table"><thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">SHA-256</th><th scope="col">Recovery</th></tr></thead><tbody>${artifactRows}</tbody></table></div><div class="actions"><button class="button" type="button" data-action="verify-receipt">Verify receipt</button><button class="button secondary" type="button" data-action="recover-package">Recover evidence package</button><button class="button secondary" type="button" data-view-target="seal">Start another seal</button></div><div id="receipt-feedback" class="helper" role="status" aria-live="polite"></div>`;
+          panel.hidden = false;
+          document.getElementById("copy-receipt").addEventListener("click", async () => {
+            try { await navigator.clipboard.writeText(JSON.stringify(receipt.receipt, null, 2)); announce("Receipt JSON copied"); } catch { announce("Clipboard unavailable; use the verification view to inspect the receipt"); }
+          });
+          panel.querySelectorAll(".artifact-button").forEach((button) => button.addEventListener("click", () => downloadArtifact(button.dataset.artifactId, button.dataset.filename)));
+        }
+
+        function renderResult() {
+          const panel = document.querySelector('[data-view="result"]');
+          const report = state.verification;
+          if (!report) { panel.innerHTML = ""; return; }
+          const config = {
+            verified: ["Verified", "Every retrievable artifact matches the manifest.", "✓", "", "verified"],
+            incomplete: ["Incomplete", "The manifest is readable, but one or more artifacts could not be retrieved.", "!", "warn", "not verified"],
+            invalid: ["Invalid", "At least one retrieved artifact differs from its recorded digest.", "×", "danger", "not verified"],
+            expired: ["Expired", "The receipt is structurally valid, but its declared expiration has passed.", "⌁", "warn", "not verified"],
+          }[report.result] || ["Unknown", "The API returned an unrecognized verification result.", "?", "danger", "not verified"];
+          const rows = (report.artifacts || []).map((artifact) => `<tr><td class="mono">${escapeHtml(artifact.artifactId)}</td><td>${escapeHtml(artifact.result)}</td><td class="mono">${escapeHtml(artifact.actualSha256 || artifact.expectedSha256 || "—")}</td></tr>`).join("");
+          panel.innerHTML = `<div class="surface-heading"><div><div class="eyebrow">Verification result</div><h2>${escapeHtml(config[0])}</h2><p>${escapeHtml(config[1])}</p></div><span class="status-chip ${config[3]}">${escapeHtml(config[4])}</span></div><div class="result-hero"><div class="result-icon ${config[3]}" aria-hidden="true">${config[2]}</div><div><h3>${escapeHtml(config[0])}</h3><p>Collection <span class="mono">${escapeHtml(report.collectionId)}</span> · checked ${escapeHtml(report.verifiedAt)}</p></div></div><div class="stat-row"><div class="stat"><strong>${report.summary.total}</strong><span>total</span></div><div class="stat"><strong>${report.summary.verified}</strong><span>verified</span></div><div class="stat"><strong>${report.summary.missing}</strong><span>missing</span></div><div class="stat"><strong>${report.summary.invalid}</strong><span>invalid</span></div></div><table class="data-table"><thead><tr><th scope="col">Artifact</th><th scope="col">Result</th><th scope="col">Digest</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No artifact rows were returned.</td></tr>'}</tbody></table><div class="actions"><button class="button secondary" type="button" data-action="recover-package">Recover evidence package</button><button class="button secondary" type="button" data-view-target="verify">Verify another receipt</button><button class="button secondary" type="button" data-view-target="collections">Owned receipt</button></div><div id="result-feedback" class="helper" role="status" aria-live="polite"></div>`;
+          panel.hidden = false;
+        }
+
+        function renderCollections() {
+          const empty = document.getElementById("collection-empty");
+          const card = document.getElementById("collection-card");
+          if (!state.receipt) { empty.hidden = false; card.hidden = true; return; }
+          empty.hidden = true;
+          card.hidden = false;
+          card.innerHTML = `<div class="receipt-card"><div class="receipt-top"><div><div class="eyebrow">Last receipt in this tab</div><h3>${escapeHtml(state.receipt.collectionId)}</h3><div class="receipt-id">${escapeHtml(state.receipt.receipt.manifestSha256)}</div></div><span class="status-chip">Owned</span></div><table class="data-table"><tbody><tr><th scope="row">Expires</th><td>${escapeHtml(state.receipt.receipt.expiresAt)}</td></tr><tr><th scope="row">Artifacts</th><td>${state.receipt.artifacts.length}</td></tr></tbody></table><div class="actions"><button class="button" type="button" data-action="verify-receipt">Verify</button><button class="button secondary" type="button" data-action="recover-package">Recover package</button></div></div>`;
+        }
+
+        async function submitSeal(event) {
+          event.preventDefault();
+          const feedback = document.getElementById("seal-feedback");
+          feedback.textContent = "";
+          const name = document.getElementById("collection-name").value.trim();
+          const expiryValue = expiresAt.value;
+          if (!name || !expiryValue || !state.files.length) {
+            reportError(new Error("Add a collection name, an expiration, and at least one file."), feedback);
+            return;
+          }
+          const expiry = new Date(expiryValue);
+          if (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+            reportError(new Error("Expiration must be in the future."), feedback);
+            return;
+          }
+          const form = new FormData();
+          form.append("collection", JSON.stringify({ name, expiresAt: expiry.toISOString(), metadata: { source: "proofvault-dashboard" } }));
+          state.files.forEach((file) => form.append("files", file, file.name));
+          setBusy(true);
+          feedback.innerHTML = '<div class="progress" role="status"><div class="progress-copy"><span>Streaming selected files</span><span>Waiting for receipt</span></div><div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div></div>';
+          announce("Seal started; streaming selected files");
+          try {
+            const response = await apiFetch("/api/v1/seal", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID().replace(/-/g, "").slice(0, 32) }, body: form });
+            const body = await response.json();
+            state.receipt = body;
+            renderReceipt();
+            showView("receipt");
+            announce(body.replayed ? "Receipt replayed" : "Collection sealed; receipt ready");
+          } catch (error) {
+            reportError(error, feedback);
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        async function submitVerify(event) {
+          event.preventDefault();
+          const feedback = document.getElementById("verify-feedback");
+          feedback.textContent = "";
+          let receipt;
+          try { receipt = JSON.parse(document.getElementById("receipt-input").value); } catch { reportError(new Error("Receipt must be valid JSON."), feedback); return; }
+          setBusy(true);
+          feedback.innerHTML = '<div class="progress" role="status"><div class="progress-copy"><span>Comparing manifest and artifact digests</span><span>Waiting for result</span></div><div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div></div>';
+          announce("Verification started");
+          try {
+            const response = await apiFetch("/api/v1/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ receipt }) });
+            state.verification = await response.json();
+            renderResult();
+            showView("result");
+            announce(`Verification result: ${state.verification.result}`);
+          } catch (error) {
+            reportError(error, feedback);
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        async function downloadArtifact(artifactId, filename) {
+          const feedback = document.getElementById("receipt-feedback");
+          try {
+            const response = await apiFetch(`/api/v1/artifacts/${encodeURIComponent(state.receipt.collectionId)}/${encodeURIComponent(artifactId)}`);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url; link.download = filename || "artifact"; link.click();
+            URL.revokeObjectURL(url);
+            feedback.textContent = `Artifact ${filename || artifactId} downloaded.`;
+            announce("Artifact download started");
+          } catch (error) { reportError(error, feedback); }
+        }
+
+        async function downloadPackage() {
+          const feedback = document.getElementById("receipt-feedback") || document.getElementById("result-feedback");
+          try {
+            const collectionId = state.receipt?.collectionId || state.verification?.collectionId;
+            if (!collectionId) throw new Error("No collection is available for recovery.");
+            const response = await apiFetch(`/api/v1/packages/${encodeURIComponent(collectionId)}`, { method: "POST" });
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url; link.download = `proofvault-${collectionId}.zip`; link.click();
+            URL.revokeObjectURL(url);
+            if (feedback) feedback.textContent = "Evidence package download started.";
+            announce("Evidence package download started");
+          } catch (error) { if (feedback) reportError(error, feedback); else announce(error instanceof Error ? error.message : "Recovery failed"); }
+        }
+
+        async function checkReady() {
+          try {
+            const response = await fetch("/health/ready", { cache: "no-store" });
+            const body = await response.json();
+            if (response.ok && body.status === "ready") { state.apiReady = true; setApiState("ready", "API ready"); }
+            else setApiState("warn", "API degraded");
+          } catch { setApiState("warn", "API unavailable"); }
+        }
+
+        document.getElementById("files").addEventListener("change", (event) => {
+          state.files = Array.from(event.target.files || []);
+          renderFiles();
+          announce(state.files.length ? `${state.files.length} file${state.files.length === 1 ? "" : "s"} selected` : "File selection cleared");
+        });
+        document.getElementById("seal-form").addEventListener("submit", submitSeal);
+        document.getElementById("verify-form").addEventListener("submit", submitVerify);
+        expiresAt.value = defaultExpiry();
+        document.addEventListener("click", (event) => {
+          const target = event.target.closest("[data-view-target], [data-action]");
+          if (!target || state.busy) return;
+          if (target.dataset.viewTarget) { if (target.dataset.viewTarget === "verify" && state.receipt) document.getElementById("receipt-input").value = JSON.stringify(state.receipt.receipt, null, 2); showView(target.dataset.viewTarget); return; }
+          if (target.dataset.action === "verify-receipt") { document.getElementById("receipt-input").value = JSON.stringify(state.receipt?.receipt || {}, null, 2); showView("verify"); return; }
+          if (target.dataset.action === "recover-package") { downloadPackage(); return; }
+        });
+        const initialPath = window.location.pathname;
+        const initialView = initialPath === "/verify" || initialPath.startsWith("/verify/") ? "verify" : initialPath === "/collections" || initialPath.startsWith("/collections/") ? "collections" : "seal";
+        showView(initialView);
+        checkReady();
+      })();
+    </script>
+  </body>
+</html>

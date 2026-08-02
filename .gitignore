@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local runtime data (never committed)
+.proofvault/
+evidence/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+config.yaml
+
+# Local Shelby configuration lives outside the repository.
+# Never copy ~/.shelby/config.yaml or private keys in here.
+
+# Editor and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local tooling state
+.commandcode/

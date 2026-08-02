@@ -1,0 +1,47 @@
+{
+  "name": "proofvault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ProofVault - Shelby-native data-provenance agent. Store it once, prove what it was, verify it anytime.",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22.0.0 <25"
+  },
+  "scripts": {
+    "format": "prettier --write \"src/**/*.{ts,tsx,json}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,json}\"",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:contract": "vitest run --config vitest.contract.config.ts",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-web.mjs",
+    "security:secrets": "node scripts/security/secrets-scan.mjs",
+    "security:audit": "corepack pnpm audit --prod && node scripts/security/audit.mjs",
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "migration:replay": "node scripts/migration-replay.mjs",
+    "auth:smoke": "node scripts/auth-smoke.mjs",
+    "runtime:proof": "node scripts/runtime-proof.mjs",
+    "start": "node dist/src/index.js",
+    "cli": "node dist/src/cli/index.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.1",
+    "@types/node": "^22.15.0",
+    "@types/yazl": "^3.3.1",
+    "eslint": "^9.30.1",
+    "globals": "^16.0.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.1.4"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^5.2.1",
+    "@fastify/multipart": "^10.1.0",
+    "@shelby-protocol/sdk": "^0.4.1",
+    "fastify": "^5.11.0",
+    "yazl": "^3.3.1",
+    "zod": "^3.24.2"
+  }
+}

@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack (pin pnpm)
+        run: corepack enable pnpm
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Contract tests
+        run: pnpm test:contract
+
+      - name: Secret scan
+        run: pnpm security:secrets
+
+      - name: Dependency audit
+        run: pnpm security:audit
+
+      - name: Bootstrap
+        run: pnpm bootstrap
+
+      - name: Runtime proof
+        run: pnpm runtime:proof

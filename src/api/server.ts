@@ -1,0 +1,557 @@
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import multipart from '@fastify/multipart';
+import { authenticateCaller } from '../application/auth.js';
+import {
+  DEFAULT_SEAL_LIMITS,
+  type SealMultipartPart,
+  type SealRequest,
+  type SealResult,
+} from '../application/seal-collection.js';
+import { sealCollection } from '../application/seal-collection.js';
+import { verifyCollection } from '../application/verify-collection.js';
+import {
+  getArtifact,
+  getManifest,
+  streamEvidencePackage,
+} from '../application/recover-collection.js';
+import type { CollectionIndexPort } from '../ports/collection-index-port.js';
+import type { StoragePort } from '../ports/storage-port.js';
+import type { Receipt } from '../domain/receipt.js';
+import { ProofVaultError, ValidationError } from '../domain/errors.js';
+import type { VerificationReport } from '../domain/verification.js';
+import type { Logger } from '../observability/logger.js';
+import { dashboardResponse, loadDashboardHtml } from './dashboard.js';
+
+export interface ServerDeps {
+  index: CollectionIndexPort;
+  storage: StoragePort;
+  logger: Logger;
+  now?: () => Date;
+  maxFiles?: number;
+  maxFileBytes?: number;
+  maxRequestBytes?: number;
+  minExpirationHours?: number;
+  maxExpirationDays?: number;
+  /** Seal-route requests allowed per caller per window. */
+  sealRateLimit?: number;
+  /** Retrieval-route requests allowed per caller per window. */
+  retrievalRateLimit?: number;
+  /** Rate-limit window in seconds. */
+  rateLimitWindowSeconds?: number;
+}
+
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+
+/**
+ * Minimal in-memory fixed-window rate limiter keyed by caller ID (and IP as a
+ * fallback). Separate budgets for seal (mutating) and retrieval routes, per
+ * SECURITY.md abuse controls. In-memory only: a single-instance limit, not a
+ * distributed one.
+ */
+export class InMemoryRateLimiter {
+  private readonly buckets = new Map<string, RateBucket>();
+
+  constructor(
+    private readonly limit: number,
+    private readonly windowSeconds: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  allow(key: string): boolean {
+    const now = this.now();
+    const bucket = this.buckets.get(key);
+    if (bucket === undefined || bucket.resetAt <= now) {
+      this.buckets.set(key, { count: 1, resetAt: now + this.windowSeconds * 1000 });
+      return true;
+    }
+    if (bucket.count >= this.limit) return false;
+    bucket.count += 1;
+    return true;
+  }
+}
+
+/** Build the ProofVault API server on the given deps. */
+export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
+  // Multipart bodies are streamed by @fastify/multipart with its own limits;
+  // the Fastify-level body limit must not truncate the multipart framing.
+  // `logger: false` disables request logging entirely (structured logs come
+  // from our own logger); no request-logging deprecation applies.
+  const maxRequestBytes = deps.maxRequestBytes ?? DEFAULT_SEAL_LIMITS.maxRequestBytes;
+  // Leave room for multipart framing while keeping Fastify's parser bound
+  // aligned with the domain's aggregate upload limit.
+  const bodyLimit = Math.max(10 * 1024 * 1024, maxRequestBytes + 1024 * 1024);
+  const app = Fastify({ logger: false, bodyLimit });
+  const dashboardHtml = await loadDashboardHtml();
+
+  await app.register(multipart, { limits: { fileSize: deps.maxFileBytes ?? 26214400 } });
+
+  const rateLimitWindow = deps.rateLimitWindowSeconds ?? 60;
+  const sealLimiter = new InMemoryRateLimiter(deps.sealRateLimit ?? 60, rateLimitWindow);
+  const retrievalLimiter = new InMemoryRateLimiter(deps.retrievalRateLimit ?? 120, rateLimitWindow);
+  const sealIpLimiter = new InMemoryRateLimiter(deps.sealRateLimit ?? 60, rateLimitWindow);
+  const retrievalIpLimiter = new InMemoryRateLimiter(
+    deps.retrievalRateLimit ?? 120,
+    rateLimitWindow,
+  );
+
+  // Request ID on every response (API_CONTRACT.md general rules).
+  app.addHook('onRequest', async (request, reply) => {
+    const requestId =
+      request.headers['x-request-id'] ?? `req_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+    request.headers['x-request-id'] = requestId;
+    reply.header('X-Request-Id', requestId);
+  });
+
+  // Stable error envelope (API_CONTRACT.md).
+  app.setErrorHandler((error, request, reply) => {
+    const requestId = request.headers['x-request-id'] as string | undefined;
+    if (error instanceof ProofVaultError) {
+      deps.logger.warn('request rejected', {
+        requestId,
+        errorCode: error.code,
+        status: 'rejected',
+        operation: (request as { routeOptions?: { url?: string } }).routeOptions?.url,
+      });
+      return reply.status(statusForCode(error.code)).send({
+        error: { code: error.code, message: error.message, requestId, details: error.details },
+      });
+    }
+    const transportError = mapTransportError(error);
+    if (transportError !== undefined) {
+      deps.logger.warn('request rejected', {
+        requestId,
+        errorCode: transportError.code,
+        status: 'rejected',
+        operation: (request as { routeOptions?: { url?: string } }).routeOptions?.url,
+      });
+      return reply.status(statusForCode(transportError.code)).send({
+        error: {
+          code: transportError.code,
+          message: transportError.message,
+          requestId,
+          details: [],
+        },
+      });
+    }
+    deps.logger.error('unhandled error', {
+      requestId,
+      errorCode: 'INTERNAL_ERROR',
+      status: 'error',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return reply.status(500).send({
+      error: { code: 'INTERNAL_ERROR', message: 'Internal error.', requestId, details: [] },
+    });
+  });
+
+  // Auth: every route under /api/v1 requires a valid bearer key.
+  app.addHook('preHandler', async (request, reply) => {
+    const routeUrl = request.routeOptions.url ?? '';
+    if (
+      routeUrl.startsWith('/health') ||
+      routeUrl === '/' ||
+      routeUrl === '/dashboard' ||
+      routeUrl === '/seal' ||
+      routeUrl === '/verify' ||
+      routeUrl === '/collections' ||
+      routeUrl === '/collections/:collectionId'
+    )
+      return;
+    const url = request.routeOptions.url ?? '';
+    const isSeal = url.includes('/seal');
+    const ipAllowed = isSeal
+      ? sealIpLimiter.allow(`ip:${request.ip}`)
+      : retrievalIpLimiter.allow(`ip:${request.ip}`);
+    if (!ipAllowed) {
+      deps.logger.warn('rate limited', {
+        requestId: request.headers['x-request-id'] as string | undefined,
+        errorCode: 'RATE_LIMITED',
+        status: 'rejected',
+        operation: url,
+      });
+      return reply
+        .header('Retry-After', String(rateLimitWindow))
+        .code(429)
+        .send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Too many requests. Try again later.',
+            requestId: request.headers['x-request-id'],
+            details: [],
+          },
+        });
+    }
+    const caller = await authenticateCaller(deps.index, request.headers.authorization);
+    (request as { caller?: unknown }).caller = caller;
+
+    // Rate limit after auth as well, so budgets key by caller ID (SECURITY.md).
+    const allowed = isSeal
+      ? sealLimiter.allow(`caller:${caller.callerId}`)
+      : retrievalLimiter.allow(`caller:${caller.callerId}`);
+    if (!allowed) {
+      deps.logger.warn('rate limited', {
+        requestId: request.headers['x-request-id'] as string | undefined,
+        callerId: caller.callerId,
+        errorCode: 'RATE_LIMITED',
+        status: 'rejected',
+        operation: url,
+      });
+      return reply
+        .header('Retry-After', String(rateLimitWindow))
+        .code(429)
+        .send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Too many requests. Try again later.',
+            requestId: request.headers['x-request-id'],
+            details: [],
+          },
+        });
+    }
+  });
+
+  app.get('/health/live', async () => ({ status: 'ok' }));
+  app.get('/health/ready', async () => {
+    // Bounded storage probe: exists() on a key that can never be committed.
+    // A false (missing) result means the adapter responds; an error means the
+    // dependency is not ready. No secrets or upstream details are exposed.
+    let storageReady = true;
+    try {
+      await Promise.race([
+        deps.storage.exists('__health_probe__'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+      ]);
+    } catch {
+      storageReady = false;
+    }
+    return { status: storageReady ? 'ready' : 'degraded' };
+  });
+
+  for (const path of ['/', '/dashboard', '/seal', '/verify', '/collections']) {
+    app.get(path, async (_request, reply) => {
+      const rendered = dashboardResponse(dashboardHtml);
+      return reply
+        .header('Content-Type', 'text/html; charset=utf-8')
+        .header('Cache-Control', 'no-store')
+        .header('Content-Security-Policy', rendered.csp)
+        .header('X-Content-Type-Options', 'nosniff')
+        .send(rendered.body);
+    });
+  }
+
+  app.get('/collections/:collectionId', async (_request, reply) => {
+    const rendered = dashboardResponse(dashboardHtml);
+    return reply
+      .header('Content-Type', 'text/html; charset=utf-8')
+      .header('Cache-Control', 'no-store')
+      .header('Content-Security-Policy', rendered.csp)
+      .header('X-Content-Type-Options', 'nosniff')
+      .send(rendered.body);
+  });
+
+  app.post('/api/v1/seal', async (request, reply) => {
+    const caller = (request as { caller?: { callerId: string } }).caller;
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0) {
+      throw new ValidationError('Idempotency-Key header is required.', [
+        { path: 'headers', reason: 'Idempotency-Key is required for mutating requests' },
+      ]);
+    }
+
+    // Multipart parts are consumed lazily by the seal service so file streams
+    // are drained as they are stored (never buffering a whole upload). The
+    // parts iterator only advances after each file body is consumed.
+    const sealRequest: SealRequest = {
+      callerId: caller!.callerId,
+      idempotencyKey,
+      parts: multipartPartsOf(request, deps.maxFiles ?? 20),
+    };
+    const result = await sealCollection(sealRequest, {
+      index: deps.index,
+      storage: deps.storage,
+      limits: {
+        maxFiles: deps.maxFiles,
+        maxFileBytes: deps.maxFileBytes,
+        maxRequestBytes: deps.maxRequestBytes,
+        minExpirationHours: deps.minExpirationHours,
+        maxExpirationDays: deps.maxExpirationDays,
+      },
+      now: deps.now,
+    });
+    deps.logger.info('collection sealed', {
+      requestId: request.headers['x-request-id'] as string,
+      callerId: caller!.callerId,
+      operation: 'seal',
+      collectionId: result.collectionId,
+      artifactCount: result.artifacts.length,
+      status: 'sealed',
+      adapter: deps.storage instanceof Object ? 'local' : undefined,
+    });
+    return reply.code(result.replayed ? 200 : 201).send(sealResponse(result));
+  });
+
+  app.post('/api/v1/verify', async (request) => {
+    const body = request.body as { receipt?: unknown };
+    if (body?.receipt === undefined) {
+      throw new ValidationError('receipt is required.', [{ path: 'receipt', reason: 'required' }]);
+    }
+    const caller = (request as { caller?: { callerId: string } }).caller;
+    const receipt = body.receipt as Receipt;
+    // Caller ownership + receipt binding (SECURITY.md): when the collection is
+    // in the index, the caller-supplied receipt fields must match the index's
+    // stored binding exactly. A tampered receipt (wrong manifestKey, digest,
+    // or expiry) is indistinguishable from an absent collection. When the
+    // collection is absent from the index, the receipt is self-validating.
+    if (typeof receipt.collectionId === 'string') {
+      const snapshot = deps.index.getCollection(receipt.collectionId);
+      if (snapshot === undefined) {
+        throw new ProofVaultError(
+          'COLLECTION_NOT_FOUND',
+          `No such collection: ${receipt.collectionId}`,
+        );
+      }
+      const stored = snapshot.collection;
+      if (
+        stored.callerId !== caller!.callerId ||
+        stored.manifestKey !== receipt.manifestKey ||
+        stored.manifestSha256 !== receipt.manifestSha256 ||
+        stored.expiresAt !== receipt.expiresAt
+      ) {
+        throw new ProofVaultError(
+          'COLLECTION_NOT_FOUND',
+          `No such collection: ${receipt.collectionId}`,
+        );
+      }
+    }
+    const report = await verifyCollection(
+      { receipt },
+      { index: deps.index, storage: deps.storage, now: deps.now },
+    );
+    return report;
+  });
+
+  app.get('/api/v1/manifests/:collectionId', async (request, reply) => {
+    const { collectionId } = request.params as { collectionId: string };
+    const receipt = await receiptForCollection(deps, collectionId, request);
+    const { manifest } = await getManifest(receipt, { index: deps.index, storage: deps.storage });
+    reply.header('Content-Type', 'application/json');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    return reply.send(manifest);
+  });
+
+  app.get('/api/v1/artifacts/:collectionId/:artifactId', async (request, reply) => {
+    const { collectionId, artifactId } = request.params as {
+      collectionId: string;
+      artifactId: string;
+    };
+    const receipt = await receiptForCollection(deps, collectionId, request);
+    const { manifest } = await getManifest(receipt, { index: deps.index, storage: deps.storage });
+    const artifact = manifest.artifacts.find((a) => a.artifactId === artifactId);
+    if (artifact === undefined) {
+      throw new ProofVaultError('COLLECTION_NOT_FOUND', `No such artifact: ${artifactId}`);
+    }
+    const fetched = await getArtifact(artifact, { index: deps.index, storage: deps.storage });
+    reply.header('Content-Type', fetched.contentType);
+    if (fetched.size !== undefined) reply.header('Content-Length', fetched.size);
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename="${sanitizeHeader(artifact.filename)}"`,
+    );
+    reply.header('ETag', `"${artifact.sha256}"`);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    return reply.send(toNodeReadable(fetched.body));
+  });
+
+  app.post('/api/v1/packages/:collectionId', async (request, reply) => {
+    const { collectionId } = request.params as { collectionId: string };
+    const receipt = await receiptForCollection(deps, collectionId, request);
+    const verification = await verifyCollection(
+      { receipt },
+      { index: deps.index, storage: deps.storage, now: deps.now },
+    );
+    const { manifest } = await getManifest(receipt, { index: deps.index, storage: deps.storage });
+    const { zipStream } = await streamEvidencePackage(
+      {
+        receipt,
+        verification,
+        artifacts: manifest.artifacts,
+        deps: { index: deps.index, storage: deps.storage },
+      },
+      () => undefined,
+    );
+    reply.header('Content-Type', 'application/zip');
+    reply.header('Content-Disposition', 'attachment; filename="evidence.zip"');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    return reply.send(toNodeReadable(zipStream));
+  });
+
+  return app;
+}
+
+/** Look up a collection's receipt and enforce caller ownership at the boundary. */
+async function receiptForCollection(
+  deps: ServerDeps,
+  collectionId: string,
+  request: { headers: { authorization?: string; 'x-request-id'?: string } },
+): Promise<Receipt> {
+  const caller = await authenticateCaller(deps.index, request.headers.authorization);
+  const snapshot = deps.index.getCollection(collectionId);
+  if (snapshot === undefined) {
+    throw new ProofVaultError('COLLECTION_NOT_FOUND', `No such collection: ${collectionId}`);
+  }
+  if (snapshot.collection.callerId !== caller.callerId) {
+    // Indistinguishable from absent: never reveal another caller's collection.
+    throw new ProofVaultError('COLLECTION_NOT_FOUND', `No such collection: ${collectionId}`);
+  }
+  if (snapshot.collection.receiptJson === null) {
+    throw new ProofVaultError('COLLECTION_NOT_FOUND', `No such collection: ${collectionId}`);
+  }
+  if (Date.parse(snapshot.collection.expiresAt) <= (deps.now?.() ?? new Date()).getTime()) {
+    throw new ProofVaultError('COLLECTION_EXPIRED', `Collection expired: ${collectionId}`);
+  }
+  return JSON.parse(snapshot.collection.receiptJson) as Receipt;
+}
+
+/**
+ * Lazy multipart parts adapter for the seal service. Yields structural parts
+ * directly from @fastify/multipart so file bodies are consumed as the seal
+ * service streams them; the parts iterator never pre-buffers a whole upload.
+ */
+function multipartPartsOf(
+  request: FastifyRequest,
+  maxFiles: number,
+): AsyncIterable<SealMultipartPart> {
+  const parts = request.parts();
+  let fileCount = 0;
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<SealMultipartPart>> {
+          const { done, value } = await parts.next();
+          if (done) return { done: true, value: undefined };
+          if (value.type === 'field') {
+            return {
+              done: false,
+              value: { type: 'field', fieldname: value.fieldname, value: value.value as string },
+            };
+          }
+          fileCount += 1;
+          if (fileCount > maxFiles) {
+            throw new ProofVaultError(
+              'VALIDATION_ERROR',
+              `No more than ${maxFiles} files per collection.`,
+            );
+          }
+          return {
+            done: false,
+            value: {
+              type: 'file',
+              fieldname: value.fieldname,
+              filename: value.filename,
+              mimetype: value.mimetype,
+              file: value.file as unknown as AsyncIterable<Uint8Array>,
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function sealResponse(result: SealResult) {
+  return {
+    collectionId: result.collectionId,
+    status: result.status,
+    replayed: result.replayed,
+    receipt: result.receipt,
+    artifacts: result.artifacts,
+  };
+}
+
+function sanitizeHeader(value: string): string {
+  return value.replace(/["\\\r\n]/g, '_');
+}
+
+const STATUS_MAP: Record<string, number> = {
+  AUTHENTICATION_REQUIRED: 401,
+  FORBIDDEN: 403,
+  VALIDATION_ERROR: 400,
+  FILE_TOO_LARGE: 413,
+  REQUEST_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  IDEMPOTENCY_CONFLICT: 409,
+  COLLECTION_NOT_FOUND: 404,
+  COLLECTION_EXPIRED: 410,
+  STORAGE_UNAVAILABLE: 503,
+  RATE_LIMITED: 429,
+  INTERNAL_ERROR: 500,
+};
+
+function statusForCode(code: string): number {
+  return STATUS_MAP[code] ?? 500;
+}
+
+/** Map Fastify/plugin parser failures to the public domain error envelope. */
+function mapTransportError(
+  error: unknown,
+): { code: keyof typeof STATUS_MAP; message: string } | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const candidate = error as { code?: unknown; statusCode?: unknown; status?: unknown };
+  const code = typeof candidate.code === 'string' ? candidate.code : undefined;
+  const status =
+    typeof candidate.statusCode === 'number'
+      ? candidate.statusCode
+      : typeof candidate.status === 'number'
+        ? candidate.status
+        : undefined;
+
+  if (code === 'FST_REQ_FILE_TOO_LARGE') {
+    return { code: 'FILE_TOO_LARGE', message: 'The uploaded file is too large.' };
+  }
+  if (code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
+    return { code: 'VALIDATION_ERROR', message: 'The request body must be valid JSON.' };
+  }
+  if (status === 413) {
+    return { code: 'REQUEST_TOO_LARGE', message: 'The request is too large.' };
+  }
+  if (status === 415) {
+    return { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'The request media type is not supported.' };
+  }
+  if (status !== undefined && status >= 400 && status < 500) {
+    return { code: 'VALIDATION_ERROR', message: 'The request could not be accepted.' };
+  }
+  return undefined;
+}
+
+export type { VerificationReport };
+
+/**
+ * Convert a web ReadableStream or async iterable into a Node Readable for
+ * Fastify `reply.send`. Fastify stringifies web ReadableStreams it cannot
+ * identify, which silently corrupts artifact/package downloads.
+ */
+function toNodeReadable(body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>): Readable {
+  if (Symbol.asyncIterator in Object(body)) {
+    return Readable.from(body as AsyncIterable<Uint8Array>);
+  }
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  return Readable.from({
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<Uint8Array>> {
+          const { done, value } = await reader.read();
+          if (done) {
+            await reader.releaseLock();
+            return { done: true, value: undefined };
+          }
+          return { done: false, value };
+        },
+      };
+    },
+  });
+}
